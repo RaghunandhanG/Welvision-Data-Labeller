@@ -38,7 +38,11 @@ if errorlevel 1 (
 
 echo Starting WelVision YOLO Data Labeller...
 echo.
-python yolo_labeler_app.py
+
+REM Create datasets directory if it doesn't exist
+if not exist "datasets" mkdir datasets
+
+python main.py
 
 if errorlevel 1 (
     echo.

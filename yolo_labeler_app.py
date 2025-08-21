@@ -1590,6 +1590,12 @@ class YOLOLabelerApp(tk.Tk):
                              command=self.start_labeling)
         start_btn.pack(side=tk.LEFT, padx=5)
         
+        export_btn = tk.Button(button_frame, text="Export to COCO", 
+                              font=("Arial", 12, "bold"), 
+                              bg="#28a745", fg="white", width=15,
+                              command=self.export_to_coco)
+        export_btn.pack(side=tk.LEFT, padx=5)
+        
         clear_btn = tk.Button(button_frame, text="Clear All", 
                              font=("Arial", 12, "bold"), 
                              bg="#dc3545", fg="white", width=15,
@@ -2396,6 +2402,185 @@ class YOLOLabelerApp(tk.Tk):
         tk.Button(button_frame, text="Cancel", 
                  font=("Arial", 12, "bold"), bg="#6c757d", fg="white", width=15,
                  command=settings_window.destroy).pack(side=tk.LEFT, padx=8)
+    
+    def export_to_coco(self):
+        """Export dataset to COCO JSON format for Roboflow upload"""
+        if not self.current_dataset_name:
+            messagebox.showerror("Error", "Please create a dataset first before exporting")
+            return
+        
+        try:
+            # Get dataset path
+            if self.dataset_save_location:
+                dataset_path = os.path.join(self.dataset_save_location, self.current_dataset_name)
+            else:
+                dataset_path = os.path.join(FILE_CONFIG['dataset_base_path'], self.current_dataset_name)
+            
+            if not os.path.exists(dataset_path):
+                messagebox.showerror("Error", f"Dataset path not found: {dataset_path}")
+                return
+            
+            # Check if we have a model loaded to get class names
+            if not self.yolo_model:
+                messagebox.showerror("Error", "Please load a YOLO model first to get class names")
+                return
+            
+            self.status_var.set("🔄 Exporting dataset to COCO format...")
+            self.update()
+            
+            # Create COCO JSON structure
+            coco_data = {
+                "info": {
+                    "description": f"Dataset: {self.current_dataset_name}",
+                    "version": "1.0",
+                    "year": 2025,
+                    "contributor": "YOLO Labeler App",
+                    "date_created": datetime.now().isoformat()
+                },
+                "licenses": [
+                    {
+                        "id": 1,
+                        "name": "Attribution License",
+                        "url": "http://creativecommons.org/licenses/by/2.0/"
+                    }
+                ],
+                "images": [],
+                "annotations": [],
+                "categories": []
+            }
+            
+            # Get class names from YOLO model
+            class_names = self.yolo_model.names
+            categories = []
+            for class_id, class_name in class_names.items():
+                categories.append({
+                    "id": int(class_id) + 1,  # COCO uses 1-based indexing
+                    "name": class_name,
+                    "supercategory": "object"
+                })
+            coco_data["categories"] = categories
+            
+            # Process images and labels
+            images_folder = os.path.join(dataset_path, "images")
+            labels_folder = os.path.join(dataset_path, "labels")
+            
+            if not os.path.exists(images_folder):
+                messagebox.showerror("Error", f"Images folder not found: {images_folder}")
+                return
+            
+            image_id = 1
+            annotation_id = 1
+            
+            # Process each image
+            image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+            for filename in os.listdir(images_folder):
+                if not any(filename.lower().endswith(ext) for ext in image_extensions):
+                    continue
+                
+                image_path = os.path.join(images_folder, filename)
+                
+                # Get image dimensions
+                try:
+                    from PIL import Image
+                    with Image.open(image_path) as img:
+                        width, height = img.size
+                except Exception as e:
+                    print(f"Error reading image {filename}: {e}")
+                    continue
+                
+                # Add image info
+                coco_data["images"].append({
+                    "id": image_id,
+                    "file_name": filename,
+                    "width": width,
+                    "height": height,
+                    "file_path": image_path  # Add full path for Roboflow compatibility
+                })
+                
+                # Check for corresponding label file
+                label_filename = os.path.splitext(filename)[0] + ".txt"
+                label_path = os.path.join(labels_folder, label_filename)
+                
+                if os.path.exists(label_path):
+                    # Read YOLO format labels and convert to COCO format
+                    try:
+                        with open(label_path, 'r') as f:
+                            lines = f.readlines()
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            
+                            parts = line.split()
+                            if len(parts) < 5:
+                                continue
+                            
+                            class_id = int(parts[0])
+                            x_center = float(parts[1])
+                            y_center = float(parts[2])
+                            bbox_width = float(parts[3])
+                            bbox_height = float(parts[4])
+                            
+                            # Convert from YOLO format (normalized) to COCO format (absolute pixels)
+                            x = (x_center - bbox_width / 2) * width
+                            y = (y_center - bbox_height / 2) * height
+                            w = bbox_width * width
+                            h = bbox_height * height
+                            
+                            # Add annotation
+                            coco_data["annotations"].append({
+                                "id": annotation_id,
+                                "image_id": image_id,
+                                "category_id": class_id + 1,  # COCO uses 1-based indexing
+                                "bbox": [x, y, w, h],
+                                "area": w * h,
+                                "iscrowd": 0
+                            })
+                            annotation_id += 1
+                            
+                    except Exception as e:
+                        print(f"Error reading label file {label_filename}: {e}")
+                
+                image_id += 1
+            
+            # Save COCO JSON file
+            coco_json_path = os.path.join(dataset_path, "annotations.json")
+            
+            import json
+            with open(coco_json_path, 'w') as f:
+                json.dump(coco_data, f, indent=2)
+            
+            # Show success message with statistics
+            num_images = len(coco_data["images"])
+            num_annotations = len(coco_data["annotations"])
+            num_categories = len(coco_data["categories"])
+            
+            success_msg = f"""COCO JSON export completed successfully!
+            
+📊 Export Statistics:
+• Images: {num_images}
+• Annotations: {num_annotations}
+• Categories: {num_categories}
+• Classes: {', '.join([cat['name'] for cat in categories])}
+
+📁 File saved as: {coco_json_path}
+
+This file is ready for upload to Roboflow!"""
+            
+            messagebox.showinfo("Export Successful", success_msg)
+            self.status_var.set(f"✅ COCO export completed: {num_images} images, {num_annotations} annotations")
+            
+            # Ask if user wants to open the folder
+            if messagebox.askyesno("Open Folder", "Would you like to open the dataset folder?"):
+                import subprocess
+                subprocess.Popen(f'explorer "{dataset_path}"')
+            
+        except Exception as e:
+            error_msg = f"Error exporting to COCO format: {str(e)}"
+            print(error_msg)
+            messagebox.showerror("Export Error", error_msg)
+            self.status_var.set("❌ Export failed")
     
     def clear_all(self):
         """Clear all uploaded images and reset interface"""

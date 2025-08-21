@@ -387,11 +387,18 @@ class YOLOLabelerApp(tk.Tk):
         self.preview_frame = tk.Frame(self.notebook, bg=APP_BG_COLOR)
         self.notebook.add(self.preview_frame, text="📁 Dataset Preview")
         
+        # Tab 3: Roboflow Upload
+        self.roboflow_frame = tk.Frame(self.notebook, bg=APP_BG_COLOR)
+        self.notebook.add(self.roboflow_frame, text="🚀 Roboflow Upload")
+        
         # Setup labeling tab (original functionality)
         self.setup_labeling_tab()
         
         # Setup dataset preview tab (new functionality)
         self.setup_dataset_preview_tab()
+        
+        # Setup roboflow upload tab
+        self.setup_roboflow_upload_tab()
     
     def setup_labeling_tab(self):
         """Setup the image labeling tab with original functionality"""
@@ -555,27 +562,60 @@ class YOLOLabelerApp(tk.Tk):
         self.dataset_canvas.configure(scrollregion=self.dataset_canvas.bbox("all"))
     
     def refresh_preview_datasets(self):
-        """Refresh the dataset dropdown for preview"""
+        """Refresh the dataset dropdown for preview - COCO JSON only"""
         try:
             # Check if the preview dropdown exists yet
             if not hasattr(self, 'preview_dataset_dropdown'):
                 print("Preview dropdown not created yet, skipping refresh")
                 return
                 
-            datasets = self.db_manager.get_datasets()
-            print(f"Found {len(datasets)} datasets in database")
+            datasets = []
             
-            dataset_names = [f"{ds['name']} ({ds['image_count']} images)" for ds in datasets]  # Use dictionary keys
-            self.preview_dataset_dropdown['values'] = dataset_names
+            # Get datasets from database that have COCO JSON files
+            db_datasets = self.db_manager.get_datasets()
+            for ds in db_datasets:
+                # Check if dataset has COCO JSON file
+                coco_file = os.path.join(ds['path'], "annotations.json")
+                if os.path.exists(coco_file):
+                    try:
+                        import json
+                        with open(coco_file, 'r') as f:
+                            coco_data = json.load(f)
+                        image_count = len(coco_data.get('images', []))
+                        ann_count = len(coco_data.get('annotations', []))
+                        datasets.append(f"{ds['name']} ({image_count} images, {ann_count} annotations)")
+                    except:
+                        datasets.append(f"{ds['name']} (COCO file error)")
             
-            if dataset_names:
-                self.preview_dataset_dropdown.set(dataset_names[0])
-                self.dataset_info_var.set(f"📊 {len(datasets)} dataset(s) available")
-                print(f"Set dropdown values: {dataset_names}")
+            # Also scan default datasets folder for COCO files
+            default_datasets_path = "datasets"
+            if os.path.exists(default_datasets_path):
+                for folder_name in os.listdir(default_datasets_path):
+                    folder_path = os.path.join(default_datasets_path, folder_name)
+                    if os.path.isdir(folder_path):
+                        coco_file = os.path.join(folder_path, "annotations.json")
+                        if os.path.exists(coco_file):
+                            try:
+                                import json
+                                with open(coco_file, 'r') as f:
+                                    coco_data = json.load(f)
+                                image_count = len(coco_data.get('images', []))
+                                ann_count = len(coco_data.get('annotations', []))
+                                dataset_name = f"{folder_name} ({image_count} images, {ann_count} annotations)"
+                                if not any(dataset_name.startswith(folder_name) for dataset_name in datasets):
+                                    datasets.append(dataset_name)
+                            except:
+                                pass
+            
+            print(f"Found {len(datasets)} datasets with COCO annotations")
+            
+            self.preview_dataset_dropdown['values'] = datasets
+            
+            if datasets:
+                self.preview_dataset_dropdown.set(datasets[0])
+                self.dataset_info_var.set(f"📊 {len(datasets)} dataset(s) with COCO annotations")
             else:
-                self.preview_dataset_dropdown.set("")
-                self.dataset_info_var.set("No datasets found")
-                print("No datasets found in database")
+                self.dataset_info_var.set("📊 No datasets with COCO annotations found")
                 
         except Exception as e:
             print(f"Error refreshing datasets: {e}")
@@ -583,6 +623,127 @@ class YOLOLabelerApp(tk.Tk):
             traceback.print_exc()
             if hasattr(self, 'dataset_info_var'):
                 self.dataset_info_var.set("Error loading datasets")
+    
+    def setup_roboflow_upload_tab(self):
+        """Setup the Roboflow upload tab"""
+        # Main container with scrolling
+        main_frame = tk.Frame(self.roboflow_frame, bg=APP_BG_COLOR)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Title
+        title_label = tk.Label(main_frame, text="🚀 Roboflow Dataset Upload", 
+                              font=("Arial", 18, "bold"), fg="white", bg=APP_BG_COLOR)
+        title_label.pack(pady=(0, 20))
+        
+        # Configuration section
+        config_frame = tk.LabelFrame(main_frame, text="Configuration", 
+                                   font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                   relief=tk.RAISED, bd=2)
+        config_frame.pack(fill="x", pady=(0, 20))
+        
+        # API Key
+        api_frame = tk.Frame(config_frame, bg=APP_BG_COLOR)
+        api_frame.pack(fill="x", padx=10, pady=5)
+        tk.Label(api_frame, text="API Key:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        self.rf_api_key_var = tk.StringVar()
+        api_entry = tk.Entry(api_frame, textvariable=self.rf_api_key_var, font=("Arial", 10),
+                            width=50, show="*")
+        api_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        
+        # Workspace ID
+        workspace_frame = tk.Frame(config_frame, bg=APP_BG_COLOR)
+        workspace_frame.pack(fill="x", padx=10, pady=5)
+        tk.Label(workspace_frame, text="Workspace ID:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        self.rf_workspace_var = tk.StringVar()
+        workspace_entry = tk.Entry(workspace_frame, textvariable=self.rf_workspace_var, font=("Arial", 10),
+                                  width=50)
+        workspace_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        
+        # Project ID
+        project_frame = tk.Frame(config_frame, bg=APP_BG_COLOR)
+        project_frame.pack(fill="x", padx=10, pady=5)
+        tk.Label(project_frame, text="Project ID:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        self.rf_project_var = tk.StringVar()
+        project_entry = tk.Entry(project_frame, textvariable=self.rf_project_var, font=("Arial", 10),
+                                width=50)
+        project_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        
+        # Dataset selection section
+        dataset_frame = tk.LabelFrame(main_frame, text="Dataset Selection", 
+                                    font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                    relief=tk.RAISED, bd=2)
+        dataset_frame.pack(fill="x", pady=(0, 20))
+        
+        # Dataset dropdown
+        dataset_select_frame = tk.Frame(dataset_frame, bg=APP_BG_COLOR)
+        dataset_select_frame.pack(fill="x", padx=10, pady=10)
+        
+        tk.Label(dataset_select_frame, text="Select Dataset:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR).pack(side="left")
+        
+        self.rf_dataset_var = tk.StringVar()
+        self.rf_dataset_dropdown = ttk.Combobox(dataset_select_frame, textvariable=self.rf_dataset_var,
+                                               font=("Arial", 10), width=40, state="readonly")
+        self.rf_dataset_dropdown.pack(side="left", padx=(10, 0))
+        self.rf_dataset_dropdown.bind("<<ComboboxSelected>>", self.on_rf_dataset_selected)
+        
+        # Refresh button
+        tk.Button(dataset_select_frame, text="🔄 Refresh", font=("Arial", 9, "bold"),
+                 bg="#17a2b8", fg="white", command=self.refresh_rf_datasets,
+                 relief=tk.RAISED, bd=2).pack(side="left", padx=(10, 0))
+        
+        # Dataset info
+        self.rf_dataset_info_var = tk.StringVar(value="Select a dataset to upload")
+        tk.Label(dataset_frame, textvariable=self.rf_dataset_info_var, font=("Arial", 9), 
+                fg="#cccccc", bg=APP_BG_COLOR).pack(padx=10, pady=(0, 10))
+        
+        # Upload section
+        upload_frame = tk.LabelFrame(main_frame, text="Upload", 
+                                   font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                   relief=tk.RAISED, bd=2)
+        upload_frame.pack(fill="x", pady=(0, 20))
+        
+        # Upload button
+        button_frame = tk.Frame(upload_frame, bg=APP_BG_COLOR)
+        button_frame.pack(pady=20)
+        
+        self.rf_upload_btn = tk.Button(button_frame, text="🚀 Upload as Predictions to Roboflow", 
+                                      font=("Arial", 14, "bold"), bg="#28a745", fg="white",
+                                      command=self.upload_to_roboflow, relief=tk.RAISED, bd=3,
+                                      padx=20, pady=10)
+        self.rf_upload_btn.pack()
+        
+        # Status section
+        status_frame = tk.LabelFrame(main_frame, text="Upload Status", 
+                                   font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                   relief=tk.RAISED, bd=2)
+        status_frame.pack(fill="both", expand=True)
+        
+        # Status text area
+        status_text_frame = tk.Frame(status_frame, bg=APP_BG_COLOR)
+        status_text_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.rf_status_text = tk.Text(status_text_frame, height=10, width=70, 
+                                     font=("Consolas", 9), bg="#2a2a2a", fg="white",
+                                     wrap=tk.WORD, state=tk.DISABLED)
+        
+        # Scrollbar for status text
+        status_scrollbar = tk.Scrollbar(status_text_frame, orient="vertical", command=self.rf_status_text.yview)
+        self.rf_status_text.configure(yscrollcommand=status_scrollbar.set)
+        
+        self.rf_status_text.pack(side="left", fill="both", expand=True)
+        status_scrollbar.pack(side="right", fill="y")
+        
+        # Initialize with some default values (optional)
+        self.rf_api_key_var.set("RKVbzglmD4K4cBfDFXRJ")  # Your API key
+        self.rf_workspace_var.set("verify-workspace-od-1")  # Your workspace
+        self.rf_project_var.set("chatter-scratch-damage-2")  # Your project
+        
+        # Load datasets
+        self.after(200, self.refresh_rf_datasets)
     
     def browse_dataset_folder(self):
         """Browse for an existing dataset folder to preview"""
@@ -622,7 +783,7 @@ class YOLOLabelerApp(tk.Tk):
             self.dataset_info_var.set(f"❌ Error loading dataset: {str(e)}")
     
     def load_dataset_images_from_folder(self, folder_path):
-        """Load and display images from a dataset folder"""
+        """Load and display images from a dataset folder using COCO JSON"""
         try:
             # Clear previous images
             for widget in self.dataset_inner_frame.winfo_children():
@@ -630,59 +791,73 @@ class YOLOLabelerApp(tk.Tk):
             self.dataset_images.clear()
             self.dataset_thumbnails.clear()
             
-            # Find image files in the folder - prioritize labeled images
-            image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
-            image_files = []
-            
-            if os.path.exists(folder_path):
-                # First, look for images in the images subfolder (original structure)
-                images_folder = os.path.join(folder_path, "images")
-                labels_folder = os.path.join(folder_path, "labels")
-                
-                if os.path.exists(images_folder):
-                    # Look for original images in images folder
-                    for file in os.listdir(images_folder):
-                        if any(file.lower().endswith(ext) for ext in image_extensions):
-                            image_path = os.path.join(images_folder, file)
-                            
-                            # Check if there's a corresponding labeled image
-                            base_name = os.path.splitext(file)[0]
-                            labeled_image_path = os.path.join(folder_path, f"{base_name}_labeled.jpg")
-                            
-                            # Prefer labeled image if it exists, otherwise use original
-                            if os.path.exists(labeled_image_path):
-                                image_files.append(labeled_image_path)
-                            else:
-                                image_files.append(image_path)
-                else:
-                    # Look in the main folder for any images (including labeled ones)
-                    for file in os.listdir(folder_path):
-                        if any(file.lower().endswith(ext) for ext in image_extensions):
-                            image_files.append(os.path.join(folder_path, file))
-            
-            if not image_files:
-                self.dataset_info_var.set(f"📂 No images found in {os.path.basename(folder_path)}")
+            # Look for COCO JSON file
+            coco_file = os.path.join(folder_path, "annotations.json")
+            if not os.path.exists(coco_file):
+                self.dataset_info_var.set(f"❌ No COCO annotations.json found in {os.path.basename(folder_path)}")
                 return
             
-            # Sort files for consistent ordering
-            image_files.sort()
+            # Load COCO data
+            import json
+            with open(coco_file, 'r') as f:
+                coco_data = json.load(f)
+            
+            images_data = coco_data.get('images', [])
+            annotations_data = coco_data.get('annotations', [])
+            categories_data = {cat['id']: cat['name'] for cat in coco_data.get('categories', [])}
+            
+            if not images_data:
+                self.dataset_info_var.set(f"📂 No images found in COCO JSON")
+                return
+            
+            # Process images and create image info list
+            image_files = []
+            for img_info in images_data:
+                # Use full path if available, otherwise construct from images folder
+                if 'file_path' in img_info and os.path.exists(img_info['file_path']):
+                    image_path = img_info['file_path']
+                else:
+                    # Fallback: construct path from images folder
+                    images_folder = os.path.join(folder_path, "images")
+                    image_path = os.path.join(images_folder, img_info['file_name'])
+                
+                if os.path.exists(image_path):
+                    # Check if this image has annotations
+                    has_annotations = any(ann['image_id'] == img_info['id'] for ann in annotations_data)
+                    ann_count = sum(1 for ann in annotations_data if ann['image_id'] == img_info['id'])
+                    
+                    image_files.append({
+                        'path': image_path,
+                        'filename': img_info['file_name'],
+                        'labeled': has_annotations,
+                        'annotation_count': ann_count,
+                        'width': img_info.get('width', 0),
+                        'height': img_info.get('height', 0),
+                        'image_id': img_info['id']
+                    })
+            
+            if not image_files:
+                self.dataset_info_var.set(f"📂 No valid images found in dataset")
+                return
+            
+            # Store image files for preview
             self.dataset_images = image_files
             
-            # Create image grid (4 columns for better layout in smaller space)
+            # Create image grid (4 columns for better layout)
             columns = 4
-            thumbnail_size = (120, 120)  # Smaller thumbnails
+            thumbnail_size = (120, 120)
             
-            self.dataset_info_var.set(f"📊 Loading {len(image_files)} images from {os.path.basename(folder_path)}...")
+            self.dataset_info_var.set(f"📊 Loading {len(image_files)} images from COCO JSON...")
             self.update()
             
-            for i, image_path in enumerate(image_files):
+            for i, image_info in enumerate(image_files):
                 try:
                     # Calculate grid position
                     row = i // columns
                     col = i % columns
                     
                     # Load and create thumbnail
-                    pil_image = Image.open(image_path)
+                    pil_image = Image.open(image_info['path'])
                     pil_image.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
                     
                     # Convert to PhotoImage
@@ -697,26 +872,28 @@ class YOLOLabelerApp(tk.Tk):
                     img_label = tk.Label(thumb_frame, image=photo, bg="#2a2a2a", cursor="hand2")
                     img_label.pack(pady=3)
                     
-                    # Filename label (shortened)
-                    filename = os.path.basename(image_path)
+                    # Filename label with annotation indicator
+                    filename = image_info['filename']
                     if len(filename) > 15:
                         filename = filename[:12] + "..."
                     
-                    # Add indicator if it's a labeled image
-                    if "_labeled" in filename:
-                        filename = "🏷️ " + filename.replace("_labeled", "")
+                    # Add indicator if it has annotations
+                    if image_info['labeled']:
+                        filename = f"🏷️ {filename} ({image_info['annotation_count']})"
+                    else:
+                        filename = f"📷 {filename}"
                     
                     name_label = tk.Label(thumb_frame, text=filename, 
                                         font=("Arial", 7), fg="white", bg="#2a2a2a")
                     name_label.pack(pady=(0, 3))
                     
                     # Bind click event for preview
-                    def make_click_handler(path, idx):
+                    def make_click_handler(idx):
                         def handler(event=None):
                             self.show_dataset_image_preview(idx)
                         return handler
                     
-                    click_handler = make_click_handler(image_path, i)
+                    click_handler = make_click_handler(i)
                     thumb_frame.bind("<Button-1>", click_handler)
                     img_label.bind("<Button-1>", click_handler)
                     name_label.bind("<Button-1>", click_handler)
@@ -736,7 +913,7 @@ class YOLOLabelerApp(tk.Tk):
                     name_label.bind("<Leave>", on_leave)
                     
                 except Exception as e:
-                    print(f"Error creating thumbnail for {image_path}: {e}")
+                    print(f"Error creating thumbnail for {image_info['path']}: {e}")
             
             # Configure grid weights for responsive layout
             for i in range(columns):
@@ -747,11 +924,15 @@ class YOLOLabelerApp(tk.Tk):
             self.dataset_canvas.configure(scrollregion=self.dataset_canvas.bbox("all"))
             
             # Update info and initialize preview
-            labeled_count = sum(1 for f in image_files if "_labeled" in f)
-            self.dataset_info_var.set(f"✅ Loaded {len(image_files)} images ({labeled_count} labeled) - Click for preview")
+            labeled_count = sum(1 for img in image_files if img['labeled'])
+            total_annotations = sum(img['annotation_count'] for img in image_files)
+            self.dataset_info_var.set(f"✅ Loaded {len(image_files)} images ({labeled_count} labeled, {total_annotations} annotations) - Click for preview")
             
             # Initialize preview variables
             self.current_preview_index = 0
+            
+            # Store COCO data for use in preview
+            self.current_coco_data = coco_data
             
             # Show first image if available
             if image_files:
@@ -762,13 +943,14 @@ class YOLOLabelerApp(tk.Tk):
             self.dataset_info_var.set(f"❌ Error loading images: {str(e)}")
     
     def show_dataset_image_preview(self, index):
-        """Show selected image in the preview panel"""
+        """Show selected image in the preview panel with COCO annotations"""
         if not self.dataset_images or index >= len(self.dataset_images):
             return
         
         try:
             self.current_preview_index = index
-            image_path = self.dataset_images[index]
+            image_info = self.dataset_images[index]
+            image_path = image_info['path']
             
             # Load and display image
             pil_image = Image.open(image_path)
@@ -781,6 +963,11 @@ class YOLOLabelerApp(tk.Tk):
             new_height = int(img_height * ratio)
             
             display_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # If image has annotations and COCO data is available, draw them
+            if image_info['labeled'] and hasattr(self, 'current_coco_data'):
+                display_image = self.create_annotated_image_from_coco(display_image, image_info['image_id'], ratio)
+            
             self.current_preview_image = ImageTk.PhotoImage(display_image)
             
             # Display in canvas
@@ -790,14 +977,63 @@ class YOLOLabelerApp(tk.Tk):
             self.preview_image_canvas.create_image(x, y, anchor=tk.NW, image=self.current_preview_image)
             
             # Update info
-            filename = os.path.basename(image_path)
-            is_labeled = "_labeled" in filename
-            label_text = "🏷️ Labeled" if is_labeled else "📷 Original"
+            filename = image_info['filename']
+            label_text = f"🏷️ Labeled ({image_info['annotation_count']})" if image_info['labeled'] else "📷 Original"
             self.preview_image_info_var.set(f"{label_text} | {index + 1}/{len(self.dataset_images)} | {filename}")
             
         except Exception as e:
             print(f"Error showing preview image: {e}")
             self.preview_image_info_var.set("❌ Error loading image")
+
+    def create_annotated_image_from_coco(self, pil_image, image_id, scale_ratio):
+        """Create annotated image using COCO annotation data"""
+        try:
+            import cv2
+            import numpy as np
+            
+            # Convert PIL to OpenCV
+            cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+            
+            if hasattr(self, 'current_coco_data'):
+                annotations = self.current_coco_data.get('annotations', [])
+                categories = {cat['id']: cat['name'] for cat in self.current_coco_data.get('categories', [])}
+                
+                # Draw annotations for this image
+                for ann in annotations:
+                    if ann['image_id'] == image_id:
+                        x, y, width, height = ann['bbox']
+                        
+                        # Scale coordinates to display size
+                        x1 = int(x * scale_ratio)
+                        y1 = int(y * scale_ratio)
+                        x2 = int((x + width) * scale_ratio)
+                        y2 = int((y + height) * scale_ratio)
+                        
+                        # Draw bounding box
+                        cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        
+                        # Draw label
+                        category_name = categories.get(ann['category_id'], 'unknown')
+                        label = category_name
+                        if 'confidence' in ann:
+                            label += f" {ann['confidence']:.2f}"
+                            
+                        # Draw label background
+                        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                        cv2.rectangle(cv_image, (x1, y1 - label_size[1] - 5), 
+                                    (x1 + label_size[0], y1), (0, 255, 0), -1)
+                        
+                        # Draw label text
+                        cv2.putText(cv_image, label, (x1, y1 - 3), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+            
+            # Convert back to PIL
+            annotated_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
+            return annotated_image
+            
+        except Exception as e:
+            print(f"Error creating annotated image: {e}")
+            return pil_image  # Return original if annotation fails
     
     def prev_preview_image(self):
         """Show previous image in preview"""
@@ -2600,6 +2836,243 @@ This file is ready for upload to Roboflow!"""
         """Handle application closing"""
         if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
             self.destroy()
+    
+    def refresh_rf_datasets(self):
+        """Refresh datasets for Roboflow upload"""
+        try:
+            datasets = []
+            
+            # Get datasets from database that have COCO JSON files
+            db_datasets = self.db_manager.get_datasets()
+            for ds in db_datasets:
+                coco_file = os.path.join(ds['path'], "annotations.json")
+                if os.path.exists(coco_file):
+                    datasets.append(ds['name'])
+            
+            # Also scan default datasets folder
+            default_datasets_path = "datasets"
+            if os.path.exists(default_datasets_path):
+                for folder_name in os.listdir(default_datasets_path):
+                    folder_path = os.path.join(default_datasets_path, folder_name)
+                    if os.path.isdir(folder_path):
+                        coco_file = os.path.join(folder_path, "annotations.json")
+                        if os.path.exists(coco_file) and folder_name not in datasets:
+                            datasets.append(folder_name)
+            
+            self.rf_dataset_dropdown['values'] = datasets
+            if datasets:
+                self.rf_dataset_dropdown.set(datasets[0])
+                self.on_rf_dataset_selected()
+            
+            self.log_rf_status(f"Found {len(datasets)} datasets with COCO annotations")
+            
+        except Exception as e:
+            self.log_rf_status(f"Error refreshing datasets: {e}")
+    
+    def on_rf_dataset_selected(self, event=None):
+        """Handle dataset selection for Roboflow upload"""
+        try:
+            dataset_name = self.rf_dataset_var.get()
+            if not dataset_name:
+                return
+            
+            # Find dataset path
+            dataset_path = None
+            db_datasets = self.db_manager.get_datasets()
+            for ds in db_datasets:
+                if ds['name'] == dataset_name:
+                    dataset_path = ds['path']
+                    break
+            
+            if not dataset_path:
+                # Check default datasets folder
+                default_path = os.path.join("datasets", dataset_name)
+                if os.path.exists(default_path):
+                    dataset_path = default_path
+            
+            if dataset_path:
+                coco_file = os.path.join(dataset_path, "annotations.json")
+                if os.path.exists(coco_file):
+                    # Load COCO data to show info
+                    import json
+                    with open(coco_file, 'r') as f:
+                        coco_data = json.load(f)
+                    
+                    image_count = len(coco_data.get('images', []))
+                    ann_count = len(coco_data.get('annotations', []))
+                    categories = [cat['name'] for cat in coco_data.get('categories', [])]
+                    
+                    info_text = f"📊 {image_count} images, {ann_count} annotations\n"
+                    info_text += f"🏷️ Classes: {', '.join(categories)}\n"
+                    info_text += f"📁 Path: {dataset_path}"
+                    
+                    self.rf_dataset_info_var.set(info_text)
+                    self.current_rf_dataset_path = dataset_path
+                else:
+                    self.rf_dataset_info_var.set("❌ No COCO annotations found")
+            else:
+                self.rf_dataset_info_var.set("❌ Dataset path not found")
+                
+        except Exception as e:
+            self.rf_dataset_info_var.set(f"❌ Error: {e}")
+    
+    def log_rf_status(self, message):
+        """Log message to Roboflow status text area"""
+        try:
+            self.rf_status_text.config(state=tk.NORMAL)
+            self.rf_status_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
+            self.rf_status_text.config(state=tk.DISABLED)
+            self.rf_status_text.see(tk.END)
+            self.update()
+        except:
+            pass
+    
+    def upload_to_roboflow(self):
+        """Upload selected dataset to Roboflow"""
+        try:
+            # Validate inputs
+            api_key = self.rf_api_key_var.get().strip()
+            workspace_id = self.rf_workspace_var.get().strip()
+            project_id = self.rf_project_var.get().strip()
+            dataset_name = self.rf_dataset_var.get()
+            
+            if not all([api_key, workspace_id, project_id, dataset_name]):
+                messagebox.showerror("Error", "Please fill in all required fields!")
+                return
+            
+            if not hasattr(self, 'current_rf_dataset_path'):
+                messagebox.showerror("Error", "Please select a dataset first!")
+                return
+            
+            # Find COCO JSON file
+            coco_file = os.path.join(self.current_rf_dataset_path, "annotations.json")
+            if not os.path.exists(coco_file):
+                messagebox.showerror("Error", f"COCO annotations file not found: {coco_file}")
+                return
+            
+            # Clear status and start upload
+            self.rf_status_text.config(state=tk.NORMAL)
+            self.rf_status_text.delete(1.0, tk.END)
+            self.rf_status_text.config(state=tk.DISABLED)
+            
+            self.log_rf_status("🚀 Starting Roboflow upload...")
+            self.log_rf_status(f"📁 Dataset: {dataset_name}")
+            self.log_rf_status(f"🔑 Workspace: {workspace_id}")
+            self.log_rf_status(f"📦 Project: {project_id}")
+            self.log_rf_status(f"📄 COCO file: {coco_file}")
+            
+            # Disable upload button during upload
+            self.rf_upload_btn.config(state=tk.DISABLED, text="⏳ Uploading...")
+            
+            # Start upload in a separate thread to prevent UI freezing
+            import threading
+            upload_thread = threading.Thread(
+                target=self.perform_roboflow_upload,
+                args=(coco_file, api_key, workspace_id, project_id)
+            )
+            upload_thread.daemon = True
+            upload_thread.start()
+            
+        except Exception as e:
+            self.log_rf_status(f"❌ Upload error: {e}")
+            self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload as Predictions to Roboflow")
+    
+    def perform_roboflow_upload(self, coco_file, api_key, workspace_id, project_id):
+        """Perform the actual Roboflow upload in a separate thread"""
+        try:
+            # Import Roboflow
+            try:
+                from roboflow import Roboflow
+                self.log_rf_status("✅ Roboflow library loaded")
+            except ImportError:
+                self.log_rf_status("❌ Roboflow library not found. Please install: pip install roboflow")
+                self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload as Predictions to Roboflow")
+                return
+            
+            # Initialize Roboflow
+            self.log_rf_status("🔄 Initializing Roboflow connection...")
+            rf = Roboflow(api_key=api_key)
+            project = rf.workspace(workspace_id).project(project_id)
+            self.log_rf_status("✅ Connected to Roboflow")
+            self.log_rf_status("📋 Upload Mode: Predictions (images will go to 'Unassigned')")
+            
+            # Load COCO data
+            self.log_rf_status("📄 Loading COCO annotations...")
+            import json
+            with open(coco_file, 'r') as f:
+                coco_data = json.load(f)
+            
+            images_data = coco_data.get('images', [])
+            self.log_rf_status(f"📊 Found {len(images_data)} images to upload")
+            
+            if not images_data:
+                self.log_rf_status("❌ No images found in COCO file")
+                self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload Dataset to Roboflow")
+                return
+            
+            # Upload images
+            successful_uploads = 0
+            failed_uploads = 0
+            
+            for i, image_info in enumerate(images_data, 1):
+                try:
+                    # Get image path
+                    if 'file_path' in image_info and os.path.exists(image_info['file_path']):
+                        image_path = image_info['file_path']
+                    else:
+                        # Fallback: construct from images folder
+                        dataset_dir = os.path.dirname(coco_file)
+                        images_dir = os.path.join(dataset_dir, "images")
+                        image_path = os.path.join(images_dir, image_info['file_name'])
+                    
+                    if not os.path.exists(image_path):
+                        self.log_rf_status(f"❌ Image not found: {image_info['file_name']}")
+                        failed_uploads += 1
+                        continue
+                    
+                    self.log_rf_status(f"[{i}/{len(images_data)}] Uploading: {image_info['file_name']}")
+                    
+                    # Upload to Roboflow as predictions (moves to Unassigned for review)
+                    response = project.single_upload(
+                        image_path=image_path,
+                        annotation_path=coco_file,
+                        is_prediction=True,  # Always upload as predictions for review
+                        num_retry_uploads=3
+                    )
+                    
+                    self.log_rf_status(f"✅ Success (Prediction): {image_info['file_name']}")
+                    successful_uploads += 1
+                    
+                except Exception as e:
+                    self.log_rf_status(f"❌ Error uploading {image_info['file_name']}: {e}")
+                    failed_uploads += 1
+            
+            # Final summary
+            self.log_rf_status("=" * 50)
+            self.log_rf_status("🎉 Upload Summary:")
+            self.log_rf_status(f"   ✅ Successful: {successful_uploads}")
+            self.log_rf_status(f"   ❌ Failed: {failed_uploads}")
+            self.log_rf_status(f"   📊 Total: {len(images_data)}")
+            self.log_rf_status(f"   📁 Destination: Unassigned (Predictions for Review)")
+            
+            if successful_uploads > 0:
+                self.log_rf_status("🎉 Upload completed successfully!")
+                self.log_rf_status("📋 Images uploaded as predictions to 'Unassigned' section")
+                messagebox.showinfo("Upload Complete", 
+                    f"Successfully uploaded {successful_uploads} images to Roboflow!\n"
+                    f"Failed: {failed_uploads}\n\n"
+                    f"📋 Images are in 'Unassigned' section for review")
+            else:
+                self.log_rf_status("❌ Upload failed - no images were uploaded")
+                messagebox.showerror("Upload Failed", "No images were successfully uploaded")
+            
+        except Exception as e:
+            self.log_rf_status(f"❌ Upload failed: {e}")
+            messagebox.showerror("Upload Error", f"Upload failed: {e}")
+        
+        finally:
+            # Re-enable upload button
+            self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload Dataset to Roboflow")
 
 # Import simpledialog for model name input
 import tkinter.simpledialog

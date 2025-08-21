@@ -624,8 +624,20 @@ class YOLOLabelerApp(tk.Tk):
             if hasattr(self, 'dataset_info_var'):
                 self.dataset_info_var.set("Error loading datasets")
     
+    def log_rf_status(self, message):
+        """Log status message to Roboflow log area"""
+        try:
+            if hasattr(self, 'rf_status_text'):
+                self.rf_status_text.config(state=tk.NORMAL)
+                self.rf_status_text.insert(tk.END, f"{message}\n")
+                self.rf_status_text.see(tk.END)
+                self.rf_status_text.config(state=tk.DISABLED)
+                self.update()
+        except Exception as e:
+            print(f"Log error: {e}")
+    
     def setup_roboflow_upload_tab(self):
-        """Setup the Roboflow upload tab"""
+        """Setup the Roboflow upload tab with step-by-step workflow"""
         # Main container with scrolling
         main_frame = tk.Frame(self.roboflow_frame, bg=APP_BG_COLOR)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -635,114 +647,129 @@ class YOLOLabelerApp(tk.Tk):
                               font=("Arial", 18, "bold"), fg="white", bg=APP_BG_COLOR)
         title_label.pack(pady=(0, 20))
         
-        # Configuration section
-        config_frame = tk.LabelFrame(main_frame, text="Configuration", 
+        # Step 1: API Key Configuration
+        step1_frame = tk.LabelFrame(main_frame, text="Step 1: 🔑 API Key", 
                                    font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
                                    relief=tk.RAISED, bd=2)
-        config_frame.pack(fill="x", pady=(0, 20))
+        step1_frame.pack(fill="x", pady=(0, 15))
         
-        # API Key
-        api_frame = tk.Frame(config_frame, bg=APP_BG_COLOR)
-        api_frame.pack(fill="x", padx=10, pady=5)
-        tk.Label(api_frame, text="API Key:", font=("Arial", 10, "bold"), 
-                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        api_container = tk.Frame(step1_frame, bg=APP_BG_COLOR)
+        api_container.pack(fill="x", padx=10, pady=10)
+        
+        tk.Label(api_container, text="API Key:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=12, anchor="w").pack(side="left")
         self.rf_api_key_var = tk.StringVar()
-        api_entry = tk.Entry(api_frame, textvariable=self.rf_api_key_var, font=("Arial", 10),
-                            width=50, show="*")
-        api_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self.rf_api_entry = tk.Entry(api_container, textvariable=self.rf_api_key_var, 
+                                    font=("Arial", 10), width=40, show="*")
+        self.rf_api_entry.pack(side="left", padx=(10, 10))
+        self.rf_api_entry.insert(0, "RKVbzglmD4K4cBfDFXRJ")  # Default API key
         
-        # Workspace ID
-        workspace_frame = tk.Frame(config_frame, bg=APP_BG_COLOR)
-        workspace_frame.pack(fill="x", padx=10, pady=5)
-        tk.Label(workspace_frame, text="Workspace ID:", font=("Arial", 10, "bold"), 
-                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
-        self.rf_workspace_var = tk.StringVar()
-        workspace_entry = tk.Entry(workspace_frame, textvariable=self.rf_workspace_var, font=("Arial", 10),
-                                  width=50)
-        workspace_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self.rf_test_api_btn = tk.Button(api_container, text="🔍 Load Projects", 
+                                        command=self.test_api_and_load_projects,
+                                        bg="#4CAF50", fg="white", font=("Arial", 9, "bold"),
+                                        relief=tk.RAISED, bd=2)
+        self.rf_test_api_btn.pack(side="left", padx=(0, 10))
         
-        # Project ID
-        project_frame = tk.Frame(config_frame, bg=APP_BG_COLOR)
-        project_frame.pack(fill="x", padx=10, pady=5)
-        tk.Label(project_frame, text="Project ID:", font=("Arial", 10, "bold"), 
-                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        # API Status
+        self.rf_api_status_var = tk.StringVar(value="🔴 Enter API key and click 'Load Projects'")
+        api_status_label = tk.Label(step1_frame, textvariable=self.rf_api_status_var, 
+                                   font=("Arial", 9), fg="#ffcc00", bg=APP_BG_COLOR)
+        api_status_label.pack(padx=10, pady=(0, 10))
+        
+        # Step 2: Project Selection
+        step2_frame = tk.LabelFrame(main_frame, text="Step 2: 📂 Project Selection", 
+                                   font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                   relief=tk.RAISED, bd=2)
+        step2_frame.pack(fill="x", pady=(0, 15))
+        
+        project_container = tk.Frame(step2_frame, bg=APP_BG_COLOR)
+        project_container.pack(fill="x", padx=10, pady=10)
+        
+        tk.Label(project_container, text="Project:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=12, anchor="w").pack(side="left")
+        
         self.rf_project_var = tk.StringVar()
-        project_entry = tk.Entry(project_frame, textvariable=self.rf_project_var, font=("Arial", 10),
-                                width=50)
-        project_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        self.rf_project_dropdown = ttk.Combobox(project_container, textvariable=self.rf_project_var,
+                                               font=("Arial", 10), width=35, state="disabled")
+        self.rf_project_dropdown.pack(side="left", padx=(10, 10))
+        self.rf_project_dropdown.bind("<<ComboboxSelected>>", self.on_project_selected)
         
-        # Dataset selection section
-        dataset_frame = tk.LabelFrame(main_frame, text="Dataset Selection", 
-                                    font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
-                                    relief=tk.RAISED, bd=2)
-        dataset_frame.pack(fill="x", pady=(0, 20))
+        # Project Status
+        self.rf_project_status_var = tk.StringVar(value="⏳ Load projects first")
+        project_status_label = tk.Label(step2_frame, textvariable=self.rf_project_status_var, 
+                                       font=("Arial", 9), fg="#cccccc", bg=APP_BG_COLOR)
+        project_status_label.pack(padx=10, pady=(0, 10))
         
-        # Dataset dropdown
-        dataset_select_frame = tk.Frame(dataset_frame, bg=APP_BG_COLOR)
-        dataset_select_frame.pack(fill="x", padx=10, pady=10)
+        # Step 3: Dataset Selection
+        step3_frame = tk.LabelFrame(main_frame, text="Step 3: 📊 Dataset Selection", 
+                                   font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                   relief=tk.RAISED, bd=2)
+        step3_frame.pack(fill="x", pady=(0, 15))
         
-        tk.Label(dataset_select_frame, text="Select Dataset:", font=("Arial", 10, "bold"), 
-                fg="white", bg=APP_BG_COLOR).pack(side="left")
+        dataset_container = tk.Frame(step3_frame, bg=APP_BG_COLOR)
+        dataset_container.pack(fill="x", padx=10, pady=10)
+        
+        tk.Label(dataset_container, text="Dataset:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=12, anchor="w").pack(side="left")
         
         self.rf_dataset_var = tk.StringVar()
-        self.rf_dataset_dropdown = ttk.Combobox(dataset_select_frame, textvariable=self.rf_dataset_var,
-                                               font=("Arial", 10), width=40, state="readonly")
-        self.rf_dataset_dropdown.pack(side="left", padx=(10, 0))
+        self.rf_dataset_dropdown = ttk.Combobox(dataset_container, textvariable=self.rf_dataset_var,
+                                               font=("Arial", 10), width=35, state="readonly")
+        self.rf_dataset_dropdown.pack(side="left", padx=(10, 10))
         self.rf_dataset_dropdown.bind("<<ComboboxSelected>>", self.on_rf_dataset_selected)
         
-        # Refresh button
-        tk.Button(dataset_select_frame, text="🔄 Refresh", font=("Arial", 9, "bold"),
-                 bg="#17a2b8", fg="white", command=self.refresh_rf_datasets,
-                 relief=tk.RAISED, bd=2).pack(side="left", padx=(10, 0))
+        refresh_dataset_btn = tk.Button(dataset_container, text="🔄 Refresh", 
+                                       command=self.refresh_rf_datasets,
+                                       bg="#17a2b8", fg="white", font=("Arial", 9, "bold"),
+                                       relief=tk.RAISED, bd=2)
+        refresh_dataset_btn.pack(side="left", padx=(5, 0))
         
-        # Dataset info
+        # Dataset Status
         self.rf_dataset_info_var = tk.StringVar(value="Select a dataset to upload")
-        tk.Label(dataset_frame, textvariable=self.rf_dataset_info_var, font=("Arial", 9), 
-                fg="#cccccc", bg=APP_BG_COLOR).pack(padx=10, pady=(0, 10))
+        dataset_status_label = tk.Label(step3_frame, textvariable=self.rf_dataset_info_var, 
+                                       font=("Arial", 9), fg="#cccccc", bg=APP_BG_COLOR)
+        dataset_status_label.pack(padx=10, pady=(0, 10))
         
-        # Upload section
-        upload_frame = tk.LabelFrame(main_frame, text="Upload", 
+        # Step 4: Upload
+        step4_frame = tk.LabelFrame(main_frame, text="Step 4: 🚀 Upload", 
                                    font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
                                    relief=tk.RAISED, bd=2)
-        upload_frame.pack(fill="x", pady=(0, 20))
+        step4_frame.pack(fill="x", pady=(0, 15))
         
-        # Upload button
-        button_frame = tk.Frame(upload_frame, bg=APP_BG_COLOR)
-        button_frame.pack(pady=20)
+        upload_container = tk.Frame(step4_frame, bg=APP_BG_COLOR)
+        upload_container.pack(pady=15)
         
-        self.rf_upload_btn = tk.Button(button_frame, text="🚀 Upload as Predictions to Roboflow", 
+        self.rf_upload_btn = tk.Button(upload_container, text="🚀 Upload as Predictions to Roboflow", 
                                       font=("Arial", 14, "bold"), bg="#28a745", fg="white",
                                       command=self.upload_to_roboflow, relief=tk.RAISED, bd=3,
-                                      padx=20, pady=10)
+                                      padx=20, pady=10, state="disabled")
         self.rf_upload_btn.pack()
         
-        # Status section
-        status_frame = tk.LabelFrame(main_frame, text="Upload Status", 
-                                   font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
-                                   relief=tk.RAISED, bd=2)
-        status_frame.pack(fill="both", expand=True)
+        # Upload info
+        upload_info = tk.Label(step4_frame, text="Images will be uploaded as predictions to 'Unassigned' section", 
+                              font=("Arial", 9), fg="#ffcc00", bg=APP_BG_COLOR)
+        upload_info.pack(pady=(0, 10))
         
-        # Status text area
-        status_text_frame = tk.Frame(status_frame, bg=APP_BG_COLOR)
-        status_text_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # Status Log
+        log_frame = tk.LabelFrame(main_frame, text="📝 Upload Log", 
+                                 font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                 relief=tk.RAISED, bd=2)
+        log_frame.pack(fill="both", expand=True)
         
-        self.rf_status_text = tk.Text(status_text_frame, height=10, width=70, 
+        log_container = tk.Frame(log_frame, bg=APP_BG_COLOR)
+        log_container.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        self.rf_status_text = tk.Text(log_container, height=8, width=70, 
                                      font=("Consolas", 9), bg="#2a2a2a", fg="white",
                                      wrap=tk.WORD, state=tk.DISABLED)
         
-        # Scrollbar for status text
-        status_scrollbar = tk.Scrollbar(status_text_frame, orient="vertical", command=self.rf_status_text.yview)
-        self.rf_status_text.configure(yscrollcommand=status_scrollbar.set)
+        log_scrollbar = tk.Scrollbar(log_container, orient="vertical", command=self.rf_status_text.yview)
+        self.rf_status_text.configure(yscrollcommand=log_scrollbar.set)
         
         self.rf_status_text.pack(side="left", fill="both", expand=True)
-        status_scrollbar.pack(side="right", fill="y")
+        log_scrollbar.pack(side="right", fill="y")
         
-        # Initialize with some default values (optional)
-        self.rf_api_key_var.set("RKVbzglmD4K4cBfDFXRJ")  # Your API key
-        self.rf_workspace_var.set("verify-workspace-od-1")  # Your workspace
-        self.rf_project_var.set("chatter-scratch-damage-2")  # Your project
-        
-        # Load datasets
+        # Load datasets initially
         self.after(200, self.refresh_rf_datasets)
     
     def browse_dataset_folder(self):
@@ -2837,8 +2864,246 @@ This file is ready for upload to Roboflow!"""
         if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
             self.destroy()
     
+    def test_api_and_load_projects(self):
+        """Step 1: Test API key and load projects directly"""
+        try:
+            api_key = self.rf_api_key_var.get().strip()
+            if not api_key:
+                messagebox.showerror("Error", "Please enter your Roboflow API key!")
+                return
+            
+            self.rf_api_status_var.set("🟡 Testing API key...")
+            self.rf_test_api_btn.config(state="disabled", text="⏳ Testing...")
+            self.update()
+            
+            # Test API connection and load projects directly
+            try:
+                from roboflow import Roboflow
+                self.roboflow_instance = Roboflow(api_key=api_key)
+                
+                # Get the default workspace for this API key
+                self.rf_api_status_var.set("🟡 Loading projects...")
+                self.update()
+                
+                workspace = self.roboflow_instance.workspace()
+                self.rf_workspace_name = getattr(workspace, 'url', getattr(workspace, 'id', 'default'))
+                workspace_display_name = getattr(workspace, 'name', self.rf_workspace_name)
+                
+                self.log_rf_status(f"Connected to workspace: {workspace_display_name}")
+                
+                # Load projects directly
+                projects = []
+                try:
+                    # Use the project_list property we discovered!
+                    self.log_rf_status(f"🔍 Loading projects from workspace...")
+                    project_list = workspace.project_list
+                    
+                    for project_info in project_list:
+                        project_id = project_info.get('id', '')
+                        project_name = project_info.get('name', '')
+                        
+                        # Extract just the project slug from the full ID
+                        if '/' in project_id:
+                            project_slug = project_id.split('/')[-1]
+                        else:
+                            project_slug = project_id
+                        
+                        if project_slug:
+                            projects.append(project_slug)
+                            self.log_rf_status(f"Found project: {project_name} (slug: {project_slug})")
+                    
+                    self.log_rf_status(f"Total projects discovered: {len(projects)}")
+                    
+                except Exception as proj_error:
+                    self.log_rf_status(f"Project discovery failed: {proj_error}")
+                    # Fallback to known project
+                    projects = ["chatter-scratch-damage-2"]
+                
+                # Update project dropdown
+                self.rf_project_dropdown['values'] = projects
+                self.rf_project_dropdown.config(state="readonly")
+                
+                if projects:
+                    self.rf_project_dropdown.set(projects[0])
+                    self.rf_project_status_var.set(f"✅ Found {len(projects)} project(s). Select one to continue.")
+                    self.log_rf_status(f"Projects loaded: {', '.join(projects)}")
+                else:
+                    self.rf_project_status_var.set("⚠️ No projects found")
+                
+                self.rf_api_status_var.set(f"🟢 API valid! {len(projects)} projects loaded.")
+                self.rf_test_api_btn.config(state="normal", text="✅ Projects Loaded")
+                
+                # Auto-select first project
+                if projects:
+                    self.on_project_selected()
+                
+            except Exception as e:
+                self.rf_api_status_var.set(f"🔴 API test failed: {str(e)}")
+                self.rf_test_api_btn.config(state="normal", text="🔍 Load Projects")
+                self.log_rf_status(f"API test failed: {str(e)}")
+                messagebox.showerror("API Error", f"Failed to connect with API key:\n{str(e)}")
+                
+        except Exception as e:
+            self.rf_api_status_var.set(f"🔴 Error: {str(e)}")
+            self.rf_test_api_btn.config(state="normal", text="🔍 Load Projects")
+            self.log_rf_status(f"Error: {str(e)}")
+    
+    def on_workspace_selected(self, event=None):
+        """Step 2: Load projects for selected workspace"""
+        try:
+            workspace_name = self.rf_workspace_var.get()
+            if not workspace_name or not hasattr(self, 'roboflow_instance'):
+                return
+            
+            self.rf_workspace_status_var.set("🟡 Loading projects...")
+            self.rf_project_dropdown.config(state="disabled")
+            self.rf_project_var.set("")
+            self.update()
+            
+            self.log_rf_status(f"Loading projects for workspace: {workspace_name}")
+            
+            # Get projects for workspace - Use discovered methods!
+            workspace = self.roboflow_instance.workspace(workspace_name)
+            projects = []
+            
+            try:
+                # Use the project_list property we discovered!
+                self.log_rf_status(f"🔍 Using project_list property...")
+                project_list = workspace.project_list
+                
+                for project_info in project_list:
+                    project_id = project_info.get('id', '')
+                    project_name = project_info.get('name', '')
+                    
+                    # Extract just the project slug from the full ID
+                    if '/' in project_id:
+                        project_slug = project_id.split('/')[-1]
+                    else:
+                        project_slug = project_id
+                    
+                    if project_slug:
+                        projects.append(project_slug)
+                        self.log_rf_status(f"Found project: {project_name} (slug: {project_slug})")
+                
+                self.log_rf_status(f"Total projects discovered: {len(projects)}")
+                
+                # Also try the list_projects() method as backup
+                if not projects:
+                    self.log_rf_status(f"🔍 Trying list_projects() method...")
+                    try:
+                        projects_result = workspace.list_projects()
+                        self.log_rf_status(f"list_projects() returned: {projects_result}")
+                        
+                        if isinstance(projects_result, list):
+                            for proj in projects_result:
+                                if isinstance(proj, dict):
+                                    project_slug = proj.get('id', '').split('/')[-1] if '/' in proj.get('id', '') else proj.get('id', '')
+                                    if project_slug:
+                                        projects.append(project_slug)
+                                        
+                    except Exception as list_error:
+                        self.log_rf_status(f"list_projects() failed: {list_error}")
+                
+                # Also try the projects() method as backup
+                if not projects:
+                    self.log_rf_status(f"🔍 Trying projects() method...")
+                    try:
+                        projects_result = workspace.projects()
+                        self.log_rf_status(f"projects() returned: {projects_result}")
+                        
+                        if hasattr(projects_result, '__iter__'):
+                            for proj in projects_result:
+                                project_slug = getattr(proj, 'slug', getattr(proj, 'id', str(proj)))
+                                if '/' in project_slug:
+                                    project_slug = project_slug.split('/')[-1]
+                                if project_slug:
+                                    projects.append(project_slug)
+                                    
+                    except Exception as projects_error:
+                        self.log_rf_status(f"projects() failed: {projects_error}")
+                
+                if not projects:
+                    # If no projects discovered, use known fallback
+                    projects = ["chatter-scratch-damage-2"]
+                    self.log_rf_status("Using fallback project ID")
+                
+                self.log_rf_status(f"Final projects list: {projects}")
+                
+            except Exception as proj_error:
+                self.log_rf_status(f"Project discovery failed: {proj_error}")
+                # Fallback to known project
+                projects = ["chatter-scratch-damage-2"]
+            
+            # Update project dropdown
+            self.rf_project_dropdown['values'] = projects
+            self.rf_project_dropdown.config(state="readonly")
+            
+            if projects:
+                self.rf_project_dropdown.set(projects[0])
+                self.rf_workspace_status_var.set(f"✅ Workspace loaded. Found {len(projects)} project(s).")
+                self.rf_project_status_var.set(f"✅ Found {len(projects)} project(s). Select one to continue.")
+                
+                # Enable step 3
+                self.rf_project_dropdown.config(state="readonly")
+                
+                # Auto-select first project
+                self.on_project_selected()
+            else:
+                self.rf_workspace_status_var.set("⚠️ No projects found in workspace")
+                self.rf_project_status_var.set("⚠️ No projects found")
+                
+        except Exception as e:
+            error_msg = f"Error loading projects: {str(e)}"
+            self.rf_workspace_status_var.set(f"🔴 {error_msg}")
+            self.rf_project_status_var.set(f"🔴 Error: {str(e)}")
+            self.log_rf_status(error_msg)
+    
+    def on_project_selected(self, event=None):
+        """Step 2: Handle project selection"""
+        try:
+            project_name = self.rf_project_var.get()
+            
+            if not project_name or not hasattr(self, 'roboflow_instance'):
+                return
+            
+            self.rf_project_status_var.set("🟡 Validating project...")
+            self.update()
+            
+            self.log_rf_status(f"Selected project: {project_name}")
+            
+            # Validate project access
+            try:
+                workspace = self.roboflow_instance.workspace()
+                project = workspace.project(project_name)
+                
+                # Get project details
+                project_display_name = getattr(project, 'name', project_name)
+                project_type = getattr(project, 'type', 'unknown')
+                project_images = getattr(project, 'images', 0)
+                
+                self.log_rf_status(f"Project details: {project_display_name} ({project_type}, {project_images} images)")
+                
+                self.rf_project_status_var.set(f"✅ Project '{project_display_name}' selected successfully")
+                
+                # Check if dataset is also selected
+                dataset_name = self.rf_dataset_var.get()
+                if dataset_name and hasattr(self, 'current_rf_dataset_path'):
+                    self.rf_upload_btn.config(state="normal")
+                    self.log_rf_status(f"🎯 Ready to upload '{dataset_name}' to '{project_name}'")
+                else:
+                    self.rf_upload_btn.config(state="disabled")
+                    self.rf_dataset_info_var.set("Select a dataset to upload to this project")
+                
+            except Exception as project_error:
+                self.rf_project_status_var.set(f"🔴 Error accessing project: {project_error}")
+                self.log_rf_status(f"Project access error: {project_error}")
+                self.rf_upload_btn.config(state="disabled")
+                
+        except Exception as e:
+            self.rf_project_status_var.set(f"🔴 Error: {str(e)}")
+    
     def refresh_rf_datasets(self):
-        """Refresh datasets for Roboflow upload"""
+        """Refresh datasets for Roboflow upload (Step 4)"""
         try:
             datasets = []
             
@@ -2863,14 +3128,15 @@ This file is ready for upload to Roboflow!"""
             if datasets:
                 self.rf_dataset_dropdown.set(datasets[0])
                 self.on_rf_dataset_selected()
-            
-            self.log_rf_status(f"Found {len(datasets)} datasets with COCO annotations")
+                self.rf_dataset_info_var.set(f"✅ Found {len(datasets)} dataset(s) with COCO annotations")
+            else:
+                self.rf_dataset_info_var.set("❌ No datasets with COCO annotations found")
             
         except Exception as e:
-            self.log_rf_status(f"Error refreshing datasets: {e}")
+            self.rf_dataset_info_var.set(f"❌ Error loading datasets: {e}")
     
     def on_rf_dataset_selected(self, event=None):
-        """Handle dataset selection for Roboflow upload"""
+        """Step 4: Handle dataset selection"""
         try:
             dataset_name = self.rf_dataset_var.get()
             if not dataset_name:
@@ -2902,12 +3168,18 @@ This file is ready for upload to Roboflow!"""
                     ann_count = len(coco_data.get('annotations', []))
                     categories = [cat['name'] for cat in coco_data.get('categories', [])]
                     
-                    info_text = f"📊 {image_count} images, {ann_count} annotations\n"
-                    info_text += f"🏷️ Classes: {', '.join(categories)}\n"
-                    info_text += f"📁 Path: {dataset_path}"
+                    info_text = f"✅ Dataset: {dataset_name}\n"
+                    info_text += f"📊 {image_count} images, {ann_count} annotations\n"
+                    info_text += f"🏷️ Classes: {', '.join(categories)}"
                     
                     self.rf_dataset_info_var.set(info_text)
                     self.current_rf_dataset_path = dataset_path
+                    
+                    # Check if all steps are complete
+                    if (hasattr(self, 'roboflow_instance') and 
+                        self.rf_workspace_var.get() and 
+                        self.rf_project_var.get()):
+                        self.rf_upload_btn.config(state="normal")
                 else:
                     self.rf_dataset_info_var.set("❌ No COCO annotations found")
             else:
@@ -2916,28 +3188,16 @@ This file is ready for upload to Roboflow!"""
         except Exception as e:
             self.rf_dataset_info_var.set(f"❌ Error: {e}")
     
-    def log_rf_status(self, message):
-        """Log message to Roboflow status text area"""
-        try:
-            self.rf_status_text.config(state=tk.NORMAL)
-            self.rf_status_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
-            self.rf_status_text.config(state=tk.DISABLED)
-            self.rf_status_text.see(tk.END)
-            self.update()
-        except:
-            pass
-    
     def upload_to_roboflow(self):
-        """Upload selected dataset to Roboflow"""
+        """Step 4: Upload dataset to Roboflow"""
         try:
-            # Validate inputs
+            # Validate all steps are complete
             api_key = self.rf_api_key_var.get().strip()
-            workspace_id = self.rf_workspace_var.get().strip()
             project_id = self.rf_project_var.get().strip()
             dataset_name = self.rf_dataset_var.get()
             
-            if not all([api_key, workspace_id, project_id, dataset_name]):
-                messagebox.showerror("Error", "Please fill in all required fields!")
+            if not all([api_key, project_id, dataset_name]):
+                messagebox.showerror("Error", "Please complete all steps before uploading!")
                 return
             
             if not hasattr(self, 'current_rf_dataset_path'):
@@ -2957,9 +3217,9 @@ This file is ready for upload to Roboflow!"""
             
             self.log_rf_status("🚀 Starting Roboflow upload...")
             self.log_rf_status(f"📁 Dataset: {dataset_name}")
-            self.log_rf_status(f"🔑 Workspace: {workspace_id}")
             self.log_rf_status(f"📦 Project: {project_id}")
             self.log_rf_status(f"📄 COCO file: {coco_file}")
+            self.log_rf_status(f"📋 Upload Mode: Predictions (goes to 'Unassigned')")
             
             # Disable upload button during upload
             self.rf_upload_btn.config(state=tk.DISABLED, text="⏳ Uploading...")
@@ -2968,7 +3228,7 @@ This file is ready for upload to Roboflow!"""
             import threading
             upload_thread = threading.Thread(
                 target=self.perform_roboflow_upload,
-                args=(coco_file, api_key, workspace_id, project_id)
+                args=(coco_file, api_key, self.rf_workspace_name, project_id)
             )
             upload_thread.daemon = True
             upload_thread.start()
@@ -3007,7 +3267,7 @@ This file is ready for upload to Roboflow!"""
             
             if not images_data:
                 self.log_rf_status("❌ No images found in COCO file")
-                self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload Dataset to Roboflow")
+                self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload as Predictions to Roboflow")
                 return
             
             # Upload images
@@ -3072,7 +3332,7 @@ This file is ready for upload to Roboflow!"""
         
         finally:
             # Re-enable upload button
-            self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload Dataset to Roboflow")
+            self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload as Predictions to Roboflow")
 
 # Import simpledialog for model name input
 import tkinter.simpledialog

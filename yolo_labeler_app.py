@@ -16,6 +16,7 @@ from datetime import datetime
 import mysql.connector
 from ultralytics import YOLO
 import threading
+import queue
 from pathlib import Path
 import torch
 from config import DATABASE_CONFIG, APP_CONFIG, FILE_CONFIG, YOLO_CONFIG
@@ -262,6 +263,11 @@ class YOLOLabelerApp(tk.Tk):
         self.current_dataset_name = ""
         self.current_dataset_path = ""
         self.dataset_save_location = ""
+        
+        # Threading attributes for Roboflow uploads
+        self.upload_queue = queue.Queue()
+        self.upload_thread = None
+        self.upload_in_progress = False
 
         
         # Detect optimal device
@@ -293,14 +299,36 @@ class YOLOLabelerApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def detect_optimal_device(self):
-        """Detect the optimal device for YOLO inference with fallback handling"""
+        """Detect the optimal device for YOLO inference with enhanced compatibility testing"""
         try:
             if torch.cuda.is_available():
-                device = 'cuda'
-                gpu_name = torch.cuda.get_device_name(0)
-                self.status_var.set(f"GPU detected: {gpu_name} - Using CUDA acceleration") if hasattr(self, 'status_var') else None
-                print(f"GPU detected: {gpu_name} - Will attempt CUDA acceleration")
-                return device
+                # Test CUDA compatibility with torchvision operations
+                try:
+                    # Create a simple test tensor to verify CUDA + torchvision compatibility
+                    test_tensor = torch.randn(1, 3, 640, 640, device='cuda')
+                    # Test if we can create boxes for NMS (the operation that's failing)
+                    test_boxes = torch.tensor([[10, 10, 50, 50]], device='cuda', dtype=torch.float32)
+                    test_scores = torch.tensor([0.9], device='cuda', dtype=torch.float32)
+                    
+                    # Try a simple torchvision operation that uses CUDA kernels
+                    import torchvision
+                    # Test if torchvision NMS works on CUDA
+                    _ = torchvision.ops.nms(test_boxes, test_scores, iou_threshold=0.5)
+                    
+                    # If we get here, CUDA + torchvision works
+                    device = 'cuda'
+                    gpu_name = torch.cuda.get_device_name(0)
+                    self.status_var.set(f"GPU detected: {gpu_name} - CUDA + torchvision compatible") if hasattr(self, 'status_var') else None
+                    print(f"GPU detected: {gpu_name} - CUDA + torchvision fully compatible")
+                    return device
+                    
+                except Exception as cuda_test_error:
+                    print(f"CUDA available but torchvision compatibility failed: {cuda_test_error}")
+                    print("Falling back to CPU due to CUDA/torchvision incompatibility")
+                    device = 'cpu'
+                    self.status_var.set("GPU detected but incompatible - Using CPU") if hasattr(self, 'status_var') else None
+                    return device
+                    
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 device = 'mps'
                 self.status_var.set("Apple Silicon GPU detected - Using MPS acceleration") if hasattr(self, 'status_var') else None
@@ -314,6 +342,34 @@ class YOLOLabelerApp(tk.Tk):
         except Exception as e:
             print(f"Device detection error: {e}")
             return 'cpu'
+    
+    def test_cuda_inference(self):
+        """Test if CUDA inference will work with the loaded model"""
+        try:
+            if not hasattr(self, 'yolo_model') or self.yolo_model is None:
+                return False
+                
+            # Create a small test image
+            import tempfile
+            test_image_path = tempfile.mktemp(suffix='.jpg')
+            test_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+            cv2.imwrite(test_image_path, test_image)
+            
+            try:
+                # Test inference on CUDA
+                _ = self.yolo_model(test_image_path, device='cuda', verbose=False)
+                os.unlink(test_image_path)  # Clean up test image
+                return True
+                
+            except Exception as inference_error:
+                print(f"CUDA inference test failed: {inference_error}")
+                if os.path.exists(test_image_path):
+                    os.unlink(test_image_path)  # Clean up test image
+                return False
+                
+        except Exception as test_error:
+            print(f"CUDA test setup failed: {test_error}")
+            return False
     
     def safe_yolo_inference(self, image_path, conf=None, max_det=None):
         """Perform YOLO inference with automatic fallback from GPU to CPU if needed"""
@@ -333,14 +389,14 @@ class YOLOLabelerApp(tk.Tk):
             return results
             
         except Exception as e:
-            # Check if it's a CUDA/torchvision compatibility issue
+            # Check if it's a CUDA/torchvision/device compatibility issue
             error_str = str(e).lower()
-            if any(keyword in error_str for keyword in ['cuda', 'torchvision::nms', 'backend', 'mps']):
+            if any(keyword in error_str for keyword in ['cuda', 'torchvision::nms', 'backend', 'mps', 'device']):
                 print(f"GPU compatibility issue detected: {e}")
                 print("Automatically falling back to CPU for this inference")
                 
                 try:
-                    # Fallback to CPU
+                    # Force CPU inference
                     results = self.yolo_model(
                         image_path,
                         conf=conf,
@@ -353,6 +409,7 @@ class YOLOLabelerApp(tk.Tk):
                         print("Updating optimal device to CPU due to compatibility issues")
                         self.optimal_device = 'cpu'
                         if hasattr(self, 'yolo_model'):
+                            print("Moving model to CPU...")
                             self.yolo_model.to("cpu")
                     
                     return results
@@ -463,26 +520,33 @@ class YOLOLabelerApp(tk.Tk):
         self.setup_roboflow_upload_tab()
     
     def setup_labeling_tab(self):
-        """Setup the image labeling tab with original functionality"""
-        # Main content container with left and right panels
+        """Setup the image labeling tab with optimized three-column layout"""
+        # Main content container with three columns
         main_content = tk.Frame(self.labeling_frame, bg=APP_BG_COLOR)
-        main_content.pack(fill=tk.BOTH, expand=True)
+        main_content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Left panel for controls (55% width)
-        self.left_panel = tk.Frame(main_content, bg=APP_BG_COLOR)
-        self.left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Left panel for controls (30% width - model & dataset)
+        self.left_panel = tk.Frame(main_content, bg=APP_BG_COLOR, width=350)
+        self.left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        self.left_panel.pack_propagate(False)  # Maintain fixed width
         
-        # Right panel for image preview (45% width) - increased for better image display
-        self.right_panel = tk.Frame(main_content, bg=APP_BG_COLOR, width=650)
-        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(20, 0))
-        self.right_panel.pack_propagate(False)  # Maintain fixed width
+        # Middle panel for controls (25% width - upload & actions)
+        self.middle_panel = tk.Frame(main_content, bg=APP_BG_COLOR, width=300)
+        self.middle_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        self.middle_panel.pack_propagate(False)  # Maintain fixed width
         
-        # Create sections in left panel
+        # Right panel for image preview (45% width - increased for better image display)
+        self.right_panel = tk.Frame(main_content, bg=APP_BG_COLOR)
+        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        # Create sections in left panel (Model & Dataset)
         self.create_model_section(self.left_panel)
         self.create_dataset_section(self.left_panel)
-        self.create_upload_section(self.left_panel)
-        self.create_action_section(self.left_panel)
-        self.create_status_panel(self.left_panel)
+        
+        # Create sections in middle panel (Upload & Actions)
+        self.create_upload_section(self.middle_panel)
+        self.create_action_section(self.middle_panel)
+        self.create_status_panel(self.middle_panel)
         
         # Create image preview in right panel
         self.create_image_preview_panel(self.right_panel)
@@ -1309,7 +1373,7 @@ class YOLOLabelerApp(tk.Tk):
                                  font=("Arial", 12, "bold"), fg="#17a2b8", bg=APP_BG_COLOR)
         raw_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 5))
         
-        self.raw_image_canvas = tk.Canvas(raw_frame, width=300, height=400, 
+        self.raw_image_canvas = tk.Canvas(raw_frame, width=550, height=600, 
                                          bg="#1a1a1a", highlightthickness=0)
         self.raw_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
@@ -1318,14 +1382,14 @@ class YOLOLabelerApp(tk.Tk):
                                      font=("Arial", 12, "bold"), fg="#28a745", bg=APP_BG_COLOR)
         labeled_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 10))
         
-        self.labeled_image_canvas = tk.Canvas(labeled_frame, width=300, height=400, 
+        self.labeled_image_canvas = tk.Canvas(labeled_frame, width=550, height=600, 
                                              bg="#1a1a1a", highlightthickness=0)
         self.labeled_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
         # Single view container (initially hidden)
         self.single_container = tk.Frame(main_display_frame, bg=APP_BG_COLOR)
         
-        self.single_image_canvas = tk.Canvas(self.single_container, width=600, height=500, 
+        self.single_image_canvas = tk.Canvas(self.single_container, width=1100, height=700, 
                                            bg="#1a1a1a", highlightthickness=0)
         self.single_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
@@ -1349,9 +1413,9 @@ class YOLOLabelerApp(tk.Tk):
                  font=("Arial", 12, "bold"), bg="#007bff", fg="white", width=15,
                  command=self.run_detection_on_current).pack(side=tk.LEFT, padx=5)
         
-        tk.Button(control_frame, text="💾 Save Labeled", 
+        tk.Button(control_frame, text="� Create Dataset", 
                  font=("Arial", 12, "bold"), bg="#28a745", fg="white", width=15,
-                 command=self.save_current_labeled).pack(side=tk.LEFT, padx=5)
+                 command=self.create_dataset_from_labels).pack(side=tk.LEFT, padx=5)
         
         tk.Button(control_frame, text="⬅️ Previous", 
                  font=("Arial", 12, "bold"), bg="#6c757d", fg="white", width=10,
@@ -1819,83 +1883,83 @@ class YOLOLabelerApp(tk.Tk):
     def create_dataset_section(self, parent):
         """Create dataset management section"""
         dataset_frame = tk.LabelFrame(parent, text="Dataset Management", 
-                                     font=("Arial", 16, "bold"), 
+                                     font=("Arial", 14, "bold"), 
                                      fg="white", bg=APP_BG_COLOR, 
                                      relief="raised", bd=2)
-        dataset_frame.pack(fill=tk.X, pady=10)
+        dataset_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 5))
         
-        # Dataset options row
+        # Dataset options row - stacked vertically for better fit
         options_frame = tk.Frame(dataset_frame, bg=APP_BG_COLOR)
-        options_frame.pack(fill=tk.X, padx=20, pady=15)
+        options_frame.pack(fill=tk.X, padx=15, pady=10)
         
-        # Dataset type selection
+        # Dataset type selection - stacked for better visibility
         self.dataset_type_var = tk.StringVar(value="new")
         new_dataset_rb = tk.Radiobutton(options_frame, text="Create New Dataset", 
                                        variable=self.dataset_type_var, value="new",
-                                       font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                       font=("Arial", 11, "bold"), fg="white", bg=APP_BG_COLOR,
                                        selectcolor=APP_BG_COLOR, command=self.on_dataset_type_changed)
-        new_dataset_rb.pack(side=tk.LEFT, padx=(0, 30))
+        new_dataset_rb.pack(anchor=tk.W, pady=(0, 5))
         
         existing_dataset_rb = tk.Radiobutton(options_frame, text="Add to Existing Dataset", 
                                             variable=self.dataset_type_var, value="existing",
-                                            font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                            font=("Arial", 11, "bold"), fg="white", bg=APP_BG_COLOR,
                                             selectcolor=APP_BG_COLOR, command=self.on_dataset_type_changed)
-        existing_dataset_rb.pack(side=tk.LEFT)
+        existing_dataset_rb.pack(anchor=tk.W)
         
         # New dataset row
         self.new_dataset_frame = tk.Frame(dataset_frame, bg=APP_BG_COLOR)
-        self.new_dataset_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        self.new_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
         
-        # Dataset name row
-        name_row = tk.Frame(self.new_dataset_frame, bg=APP_BG_COLOR)
-        name_row.pack(fill=tk.X, pady=(0, 10))
-        
-        tk.Label(name_row, text="Dataset Name:", 
-                              font=("Arial", 12, "bold"), 
-                fg="white", bg=APP_BG_COLOR).pack(side=tk.LEFT)
+        # Dataset name row - vertical layout for better fit
+        tk.Label(self.new_dataset_frame, text="Dataset Name:", 
+                 font=("Arial", 11, "bold"), 
+                 fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W, pady=(0, 5))
         
         self.dataset_name_var = tk.StringVar()
-        self.dataset_entry = tk.Entry(name_row, textvariable=self.dataset_name_var, 
-                                     font=("Arial", 11), width=40)
-        self.dataset_entry.pack(side=tk.LEFT, padx=(10, 0))
+        self.dataset_entry = tk.Entry(self.new_dataset_frame, textvariable=self.dataset_name_var, 
+                                     font=("Arial", 10), width=35)
+        self.dataset_entry.pack(fill=tk.X, pady=(0, 10))
         
-        # Dataset location row
-        location_row = tk.Frame(self.new_dataset_frame, bg=APP_BG_COLOR)
-        location_row.pack(fill=tk.X, pady=(0, 5))
+        # Dataset location row - vertical layout
+        tk.Label(self.new_dataset_frame, text="Save Location:", 
+                 font=("Arial", 11, "bold"), 
+                 fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W, pady=(0, 5))
         
-        tk.Label(location_row, text="Save Location:", 
-                             font=("Arial", 12, "bold"), 
-                fg="white", bg=APP_BG_COLOR).pack(side=tk.LEFT)
+        location_controls = tk.Frame(self.new_dataset_frame, bg=APP_BG_COLOR)
+        location_controls.pack(fill=tk.X, pady=(0, 5))
         
-        browse_location_btn = tk.Button(location_row, text="Browse Folder", 
-                                       font=("Arial", 11, "bold"), 
-                                       bg="#17a2b8", fg="white", 
+        browse_location_btn = tk.Button(location_controls, text="Browse", 
+                                       font=("Arial", 10, "bold"), 
+                                       bg="#17a2b8", fg="white", width=8,
                                        command=self.browse_dataset_location)
-        browse_location_btn.pack(side=tk.LEFT, padx=(10, 10))
+        browse_location_btn.pack(side=tk.LEFT, padx=(0, 5))
         
         self.location_var = tk.StringVar(value="datasets (default)")
-        location_entry = tk.Entry(location_row, textvariable=self.location_var, 
-                                 font=("Arial", 10), width=50, state="readonly")
-        location_entry.pack(side=tk.LEFT, padx=(0, 10))
+        location_entry = tk.Entry(location_controls, textvariable=self.location_var, 
+                                 font=("Arial", 9), state="readonly")
+        location_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Existing dataset row
+        # Existing dataset row - vertical layout
         self.existing_dataset_frame = tk.Frame(dataset_frame, bg=APP_BG_COLOR)
-        self.existing_dataset_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+        self.existing_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
         
         tk.Label(self.existing_dataset_frame, text="Select Dataset:", 
-                             font=("Arial", 12, "bold"), 
-                fg="white", bg=APP_BG_COLOR).pack(side=tk.LEFT)
+                 font=("Arial", 11, "bold"), 
+                 fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W, pady=(0, 5))
+        
+        dataset_controls = tk.Frame(self.existing_dataset_frame, bg=APP_BG_COLOR)
+        dataset_controls.pack(fill=tk.X)
         
         self.existing_dataset_var = tk.StringVar()
-        self.dataset_dropdown = ttk.Combobox(self.existing_dataset_frame, textvariable=self.existing_dataset_var, 
-                                           font=("Arial", 11), width=50, state="readonly")
-        self.dataset_dropdown.pack(side=tk.LEFT, padx=(10, 20))
+        self.dataset_dropdown = ttk.Combobox(dataset_controls, textvariable=self.existing_dataset_var, 
+                                           font=("Arial", 10), state="readonly")
+        self.dataset_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         
-        refresh_datasets_btn = tk.Button(self.existing_dataset_frame, text="Refresh", 
-                                        font=("Arial", 11, "bold"), 
-                                        bg="#17a2b8", fg="white", 
+        refresh_datasets_btn = tk.Button(dataset_controls, text="Refresh", 
+                                        font=("Arial", 10, "bold"), 
+                                        bg="#17a2b8", fg="white", width=8,
                                         command=self.load_datasets)
-        refresh_datasets_btn.pack(side=tk.LEFT, padx=5)
+        refresh_datasets_btn.pack(side=tk.LEFT)
         
         # Initially hide existing dataset frame
         self.existing_dataset_frame.pack_forget()
@@ -1903,107 +1967,110 @@ class YOLOLabelerApp(tk.Tk):
     def create_upload_section(self, parent):
         """Create image upload section"""
         upload_frame = tk.LabelFrame(parent, text="Image Upload", 
-                                    font=("Arial", 16, "bold"), 
+                                    font=("Arial", 14, "bold"), 
                                      fg="white", bg=APP_BG_COLOR, 
                                      relief="raised", bd=2)
-        upload_frame.pack(fill=tk.X, pady=10)
+        upload_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Upload options
+        # Upload options - vertical layout for better fit
         options_frame = tk.Frame(upload_frame, bg=APP_BG_COLOR)
-        options_frame.pack(fill=tk.X, padx=20, pady=15)
+        options_frame.pack(fill=tk.X, padx=15, pady=10)
         
         upload_files_btn = tk.Button(options_frame, text="Upload Individual Images", 
-                                    font=("Arial", 12, "bold"), 
-                                    bg="#28a745", fg="white", width=25,
+                                    font=("Arial", 11, "bold"), 
+                                    bg="#28a745", fg="white",
                                     command=self.upload_images)
-        upload_files_btn.pack(side=tk.LEFT, padx=5)
+        upload_files_btn.pack(fill=tk.X, pady=(0, 5))
         
         upload_folder_btn = tk.Button(options_frame, text="Upload Image Folder", 
-                                     font=("Arial", 12, "bold"), 
-                                     bg="#007bff", fg="white", width=25,
+                                     font=("Arial", 11, "bold"), 
+                                     bg="#007bff", fg="white",
                                      command=self.upload_image_folder)
-        upload_folder_btn.pack(side=tk.LEFT, padx=5)
+        upload_folder_btn.pack(fill=tk.X, pady=(0, 5))
         
-        # Image info
-        info_frame = tk.Frame(upload_frame, bg=APP_BG_COLOR)
-        info_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
-        
-        self.image_info_var = tk.StringVar(value="No images loaded")
-        info_label = tk.Label(info_frame, textvariable=self.image_info_var, 
-                             font=("Arial", 12), fg="#cccccc", bg=APP_BG_COLOR)
-        info_label.pack(side=tk.LEFT)
+        # Upload info display
+        self.upload_info_var = tk.StringVar(value="No images uploaded")
+        info_label = tk.Label(options_frame, textvariable=self.upload_info_var, 
+                             font=("Arial", 10), fg="#ffc107", bg=APP_BG_COLOR, 
+                             wraplength=250, justify=tk.LEFT)
+        info_label.pack(fill=tk.X, pady=(5, 0))
     
     def create_action_section(self, parent):
         """Create action buttons section"""
         action_frame = tk.LabelFrame(parent, text="Actions", 
-                                    font=("Arial", 16, "bold"), 
+                                    font=("Arial", 14, "bold"), 
                                     fg="white", bg=APP_BG_COLOR, 
                                     relief="raised", bd=2)
-        action_frame.pack(fill=tk.X, pady=10)
+        action_frame.pack(fill=tk.X, pady=(0, 10))
         
         button_frame = tk.Frame(action_frame, bg=APP_BG_COLOR)
-        button_frame.pack(fill=tk.X, padx=20, pady=15)
+        button_frame.pack(fill=tk.X, padx=15, pady=10)
         
+        # Arrange buttons in a 2x3 grid for better fit
         start_btn = tk.Button(button_frame, text="Start Labeling", 
-                                 font=("Arial", 12, "bold"), 
-                             bg="#ffc107", fg="black", width=15,
+                             font=("Arial", 11, "bold"), 
+                             bg="#ffc107", fg="black",
                              command=self.start_labeling)
-        start_btn.pack(side=tk.LEFT, padx=5)
+        start_btn.pack(fill=tk.X, pady=(0, 5))
         
-        export_btn = tk.Button(button_frame, text="Validate COCO", 
-                              font=("Arial", 12, "bold"), 
-                              bg="#28a745", fg="white", width=15,
-                              command=self.export_to_coco)
-        export_btn.pack(side=tk.LEFT, padx=5)
+        export_btn = tk.Button(button_frame, text="📦 Create Dataset", 
+                              font=("Arial", 11, "bold"), 
+                              bg="#28a745", fg="white",
+                              command=self.create_dataset_from_labels)
+        export_btn.pack(fill=tk.X, pady=(0, 5))
         
         clear_btn = tk.Button(button_frame, text="Clear All", 
-                             font=("Arial", 12, "bold"), 
-                             bg="#dc3545", fg="white", width=15,
+                             font=("Arial", 11, "bold"), 
+                             bg="#dc3545", fg="white",
                              command=self.clear_all)
-        clear_btn.pack(side=tk.LEFT, padx=5)
+        clear_btn.pack(fill=tk.X, pady=(0, 5))
         
-        db_settings_btn = tk.Button(button_frame, text="DB Settings", 
-                                   font=("Arial", 12, "bold"), 
-                                   bg="#17a2b8", fg="white", width=15,
+        # Second row of buttons
+        settings_row = tk.Frame(button_frame, bg=APP_BG_COLOR)
+        settings_row.pack(fill=tk.X, pady=(0, 5))
+        
+        db_settings_btn = tk.Button(settings_row, text="DB Settings", 
+                                   font=("Arial", 10, "bold"), 
+                                   bg="#17a2b8", fg="white",
                                    command=self.show_db_settings)
-        db_settings_btn.pack(side=tk.LEFT, padx=5)
+        db_settings_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         
-        settings_btn = tk.Button(button_frame, text="YOLO Settings", 
-                                font=("Arial", 12, "bold"), 
-                                bg="#6c757d", fg="white", width=15,
+        settings_btn = tk.Button(settings_row, text="YOLO Settings", 
+                                font=("Arial", 10, "bold"), 
+                                bg="#6c757d", fg="white",
                                 command=self.show_yolo_settings)
-        settings_btn.pack(side=tk.LEFT, padx=5)
+        settings_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
     
     def create_status_panel(self, parent):
         """Create status panel"""
         status_frame = tk.LabelFrame(parent, text="Status", 
-                                    font=("Arial", 16, "bold"), 
+                                    font=("Arial", 14, "bold"), 
                                     fg="white", bg=APP_BG_COLOR, 
                                     relief="raised", bd=2)
-        status_frame.pack(fill=tk.X, pady=10)
+        status_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         
         # Status section
         self.status_var = tk.StringVar(value=f"Ready - Device: {self.optimal_device.upper()} - Load a model and upload images to begin")
         status_label = tk.Label(status_frame, textvariable=self.status_var, 
-                               font=("Arial", 11), fg="#cccccc", bg=APP_BG_COLOR,
-                               wraplength=800, justify=tk.LEFT)
-        status_label.pack(anchor=tk.W, padx=20, pady=15)
+                               font=("Arial", 10), fg="#cccccc", bg=APP_BG_COLOR,
+                               wraplength=280, justify=tk.LEFT)
+        status_label.pack(anchor=tk.W, padx=15, pady=10)
         
         # Dataset location info
         self.location_info_var = tk.StringVar(value="Dataset save location: datasets (default)")
         location_info_label = tk.Label(status_frame, textvariable=self.location_info_var, 
-                                     font=("Arial", 10), fg="#888888", bg=APP_BG_COLOR,
-                                     wraplength=800, justify=tk.LEFT)
-        location_info_label.pack(anchor=tk.W, padx=20, pady=(0, 15))
+                                     font=("Arial", 9), fg="#888888", bg=APP_BG_COLOR,
+                                     wraplength=280, justify=tk.LEFT)
+        location_info_label.pack(anchor=tk.W, padx=15, pady=(0, 10))
     
     def on_dataset_type_changed(self):
         """Handle dataset type radio button change"""
         if self.dataset_type_var.get() == "new":
             self.existing_dataset_frame.pack_forget()
-            self.new_dataset_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+            self.new_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
         else:
             self.new_dataset_frame.pack_forget()
-            self.existing_dataset_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+            self.existing_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
     
     def load_models(self):
         """Load available models from database"""
@@ -2084,12 +2151,13 @@ class YOLOLabelerApp(tk.Tk):
             for dataset in datasets:
                 if not os.path.exists(dataset['path']):
                     # Dataset folder no longer exists, remove from database
-                    self.db_manager.cursor.execute("DELETE FROM datasets WHERE name = %s", (dataset['name'],))
+                    cursor = self.db_connection.cursor()
+                    cursor.execute("DELETE FROM datasets WHERE dataset_name = %s", (dataset['name'],))
                     deleted_count += 1
                     print(f"Removed deleted dataset from database: {dataset['name']}")
             
             if deleted_count > 0:
-                self.db_manager.connection.commit()
+                self.db_connection.commit()
                 print(f"Cleaned up {deleted_count} deleted dataset(s) from database")
                 
         except Exception as e:
@@ -2153,18 +2221,29 @@ class YOLOLabelerApp(tk.Tk):
             return
         
         try:
-            # Load YOLO model with optimal device
-            self.status_var.set(f"Loading YOLO model on {self.optimal_device.upper()}...")
+            # Load YOLO model initially on CPU for safety
+            self.status_var.set(f"Loading YOLO model...")
             self.update()
             
             self.yolo_model = YOLO(model_path)
             
-            # Try to move model to optimal device with fallback handling
+            # Try to move model to optimal device with comprehensive error handling
             try:
                 if self.optimal_device == 'cuda':
-                    self.yolo_model.to("cuda")
-                    device_info = f"CUDA GPU ({torch.cuda.get_device_name(0)})"
-                    print(f"Model successfully loaded on CUDA GPU")
+                    # Test CUDA compatibility before moving model
+                    print("Testing CUDA compatibility before moving model...")
+                    test_result = self.test_cuda_inference()
+                    
+                    if test_result:
+                        self.yolo_model.to("cuda")
+                        device_info = f"CUDA GPU ({torch.cuda.get_device_name(0)})"
+                        print(f"Model successfully loaded on CUDA GPU")
+                    else:
+                        print("CUDA compatibility test failed, using CPU instead")
+                        self.optimal_device = 'cpu'
+                        self.yolo_model.to("cpu")
+                        device_info = "CPU (CUDA incompatible)"
+                        
                 elif self.optimal_device == 'mps':
                     self.yolo_model.to("mps")
                     device_info = "Apple Silicon GPU (MPS)"
@@ -2844,6 +2923,202 @@ class YOLOLabelerApp(tk.Tk):
                  font=("Arial", 12, "bold"), bg="#6c757d", fg="white", width=15,
                  command=settings_window.destroy).pack(side=tk.LEFT, padx=8)
     
+    def create_dataset_from_labels(self):
+        """Create a dataset in COCO format from current labeling session"""
+        try:
+            # Check if we have a current dataset
+            if not hasattr(self, 'current_dataset_name') or not self.current_dataset_name:
+                messagebox.showwarning("No Dataset", "Please create or select a dataset first.")
+                return
+            
+            # Get dataset path
+            dataset_path = getattr(self, 'current_dataset_path', None)
+            if not dataset_path or not os.path.exists(dataset_path):
+                messagebox.showwarning("Dataset Path", "Dataset path not found. Please create a dataset first.")
+                return
+            
+            # Check if images exist
+            images_dir = os.path.join(dataset_path, 'images')
+            if not os.path.exists(images_dir):
+                messagebox.showwarning("No Images", "No images directory found in dataset.")
+                return
+            
+            # Count images
+            image_files = [f for f in os.listdir(images_dir) 
+                          if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))]
+            
+            if not image_files:
+                messagebox.showwarning("No Images", "No image files found in dataset.")
+                return
+            
+            # Create progress dialog
+            progress_window = tk.Toplevel(self)
+            progress_window.title("Creating Dataset")
+            progress_window.geometry("400x150")
+            progress_window.resizable(False, False)
+            progress_window.transient(self)
+            progress_window.grab_set()
+            
+            # Center the window
+            progress_window.geometry("+%d+%d" % (
+                self.winfo_rootx() + 50,
+                self.winfo_rooty() + 50
+            ))
+            
+            tk.Label(progress_window, text="Creating COCO dataset...", font=('Arial', 12)).pack(pady=20)
+            
+            progress_bar = ttk.Progressbar(progress_window, mode='determinate', length=300)
+            progress_bar.pack(pady=10)
+            
+            status_label = tk.Label(progress_window, text="Initializing...")
+            status_label.pack(pady=5)
+            
+            # Initialize COCO structure
+            coco_data = {
+                "info": {
+                    "description": f"WelVision Dataset: {self.current_dataset_name}",
+                    "version": "1.0",
+                    "year": 2025,
+                    "contributor": "WelVision YOLO Data Labeller",
+                    "date_created": datetime.now().isoformat()
+                },
+                "licenses": [{
+                    "id": 1,
+                    "name": "Custom License",
+                    "url": ""
+                }],
+                "images": [],
+                "annotations": [],
+                "categories": []
+            }
+            
+            # Get categories from database
+            try:
+                cursor = self.db_connection.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT class_name 
+                    FROM annotations 
+                    WHERE dataset_name = %s
+                """, (self.current_dataset_name,))
+                
+                class_names = [row[0] for row in cursor.fetchall()]
+                
+                # Add categories to COCO
+                for idx, class_name in enumerate(class_names, 1):
+                    coco_data["categories"].append({
+                        "id": idx,
+                        "name": class_name,
+                        "supercategory": "object"
+                    })
+                
+                # Create class name to ID mapping
+                class_to_id = {name: idx for idx, name in enumerate(class_names, 1)}
+                
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Database Error", f"Error reading categories: {str(e)}")
+                return
+            
+            # Process images
+            progress_bar['maximum'] = len(image_files)
+            annotation_id = 1
+            
+            for idx, image_file in enumerate(image_files):
+                image_path = os.path.join(images_dir, image_file)
+                
+                # Update progress
+                progress_bar['value'] = idx + 1
+                status_label.config(text=f"Processing: {image_file}")
+                progress_window.update()
+                
+                try:
+                    # Get image dimensions
+                    with Image.open(image_path) as img:
+                        width, height = img.size
+                    
+                    # Add image to COCO
+                    image_id = idx + 1
+                    coco_data["images"].append({
+                        "id": image_id,
+                        "width": width,
+                        "height": height,
+                        "file_name": image_file,
+                        "file_path": image_path
+                    })
+                    
+                    # Get annotations for this image
+                    cursor.execute("""
+                        SELECT class_name, x, y, width, height, confidence 
+                        FROM annotations 
+                        WHERE dataset_name = %s AND image_filename = %s
+                    """, (self.current_dataset_name, image_file))
+                    
+                    annotations = cursor.fetchall()
+                    
+                    # Add annotations to COCO
+                    for ann in annotations:
+                        class_name, x, y, w, h, confidence = ann
+                        
+                        if class_name in class_to_id:
+                            # Convert relative coordinates to absolute
+                            abs_x = x * width
+                            abs_y = y * height
+                            abs_w = w * width
+                            abs_h = h * height
+                            
+                            coco_data["annotations"].append({
+                                "id": annotation_id,
+                                "image_id": image_id,
+                                "category_id": class_to_id[class_name],
+                                "bbox": [abs_x, abs_y, abs_w, abs_h],
+                                "area": abs_w * abs_h,
+                                "iscrowd": 0,
+                                "confidence": confidence
+                            })
+                            annotation_id += 1
+                    
+                except Exception as e:
+                    print(f"Error processing {image_file}: {str(e)}")
+                    continue
+            
+            # Save COCO file
+            annotations_file = os.path.join(dataset_path, 'annotations.json')
+            
+            try:
+                with open(annotations_file, 'w') as f:
+                    json.dump(coco_data, f, indent=2)
+                
+                progress_window.destroy()
+                
+                # Show success message
+                total_images = len(coco_data["images"])
+                total_annotations = len(coco_data["annotations"])
+                total_categories = len(coco_data["categories"])
+                
+                messagebox.showinfo(
+                    "Dataset Created Successfully!", 
+                    f"COCO dataset created successfully!\n\n"
+                    f"📊 Statistics:\n"
+                    f"   • Images: {total_images}\n"
+                    f"   • Annotations: {total_annotations}\n"
+                    f"   • Categories: {total_categories}\n\n"
+                    f"📁 Location: {annotations_file}\n\n"
+                    f"✅ Dataset is ready for preview and Roboflow upload!"
+                )
+                
+                # Refresh all dataset dropdowns
+                self.refresh_all_datasets()
+                
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Save Error", f"Error saving COCO file: {str(e)}")
+                return
+            
+        except Exception as e:
+            if 'progress_window' in locals():
+                progress_window.destroy()
+            messagebox.showerror("Error", f"Error creating dataset: {str(e)}")
+
     def export_to_coco(self):
         """Validate and display COCO JSON format (dataset is already in COCO format)"""
         if not self.current_dataset_name:
@@ -3291,7 +3566,7 @@ This dataset is ready for upload to Roboflow!"""
             self.rf_dataset_info_var.set(f"❌ Error: {e}")
     
     def upload_to_roboflow(self):
-        """Step 4: Upload dataset to Roboflow"""
+        """Step 4: Upload dataset to Roboflow with threaded approach"""
         try:
             # Validate all steps are complete
             api_key = self.rf_api_key_var.get().strip()
@@ -3312,32 +3587,224 @@ This dataset is ready for upload to Roboflow!"""
                 messagebox.showerror("Error", f"COCO annotations file not found: {coco_file}")
                 return
             
+            # Check if upload is already in progress
+            if self.upload_in_progress:
+                self.log_rf_status("⚠️ Upload already in progress. Please wait...")
+                return
+            
             # Clear status and start upload
             self.rf_status_text.config(state=tk.NORMAL)
             self.rf_status_text.delete(1.0, tk.END)
             self.rf_status_text.config(state=tk.DISABLED)
             
-            self.log_rf_status("🚀 Starting Roboflow upload...")
+            self.log_rf_status("🚀 Starting threaded Roboflow upload...")
             self.log_rf_status(f"📁 Dataset: {dataset_name}")
             self.log_rf_status(f"📦 Project: {project_id}")
             self.log_rf_status(f"📄 COCO file: {coco_file}")
             self.log_rf_status(f"📋 Upload Mode: Predictions (goes to 'Unassigned')")
             
-            # Disable upload button during upload
-            self.rf_upload_btn.config(state=tk.DISABLED, text="⏳ Uploading...")
-            
-            # Start upload in a separate thread to prevent UI freezing
-            import threading
-            upload_thread = threading.Thread(
-                target=self.perform_roboflow_upload,
-                args=(coco_file, api_key, self.rf_workspace_name, project_id)
-            )
-            upload_thread.daemon = True
-            upload_thread.start()
+            # Start threaded upload
+            self.start_threaded_upload(coco_file, api_key, project_id)
             
         except Exception as e:
             self.log_rf_status(f"❌ Upload error: {e}")
             self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload as Predictions to Roboflow")
+    
+    def start_threaded_upload(self, coco_file, api_key, project_id):
+        """Start the upload process in a separate thread"""
+        # Disable upload button and start progress
+        self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
+        self.upload_in_progress = True
+        
+        # Start upload thread
+        self.upload_thread = threading.Thread(
+            target=self.threaded_upload_worker,
+            args=(coco_file, api_key, project_id),
+            daemon=True
+        )
+        self.upload_thread.start()
+        
+        # Start progress monitor
+        self.monitor_upload_progress()
+
+    def threaded_upload_worker(self, coco_file, api_key, project_id):
+        """Worker function that runs in separate thread"""
+        try:
+            # Call the actual upload function
+            success = self.upload_dataset_to_roboflow_threaded(coco_file, api_key, project_id)
+            
+            # Send result back to main thread
+            self.upload_queue.put(('complete', success))
+            
+        except Exception as e:
+            self.upload_queue.put(('error', str(e)))
+
+    def monitor_upload_progress(self):
+        """Monitor upload progress and update UI"""
+        try:
+            # Check for messages from upload thread
+            while True:
+                message_type, data = self.upload_queue.get_nowait()
+                
+                if message_type == 'complete':
+                    # Upload finished
+                    self.upload_in_progress = False
+                    self.rf_upload_btn.config(state='normal', text="🚀 Upload as Predictions to Roboflow")
+                    
+                    if data:  # Success
+                        self.log_rf_status("🎉 Threaded upload completed successfully!")
+                    else:  # Failed
+                        self.log_rf_status("❌ Upload failed. Check logs above.")
+                    return
+                    
+                elif message_type == 'error':
+                    # Upload error
+                    self.upload_in_progress = False
+                    self.rf_upload_btn.config(state='normal', text="🚀 Upload as Predictions to Roboflow")
+                    self.log_rf_status(f"❌ Upload error: {data}")
+                    return
+                    
+                elif message_type == 'progress':
+                    # Progress update
+                    self.log_rf_status(data)
+                    
+        except queue.Empty:
+            # No messages yet, check again in 100ms
+            if self.upload_in_progress:
+                self.after(100, self.monitor_upload_progress)
+
+    def upload_dataset_to_roboflow_threaded(self, coco_file, api_key, project_id):
+        """Optimized threaded upload with progress tracking"""
+        try:
+            # Import required modules
+            try:
+                from roboflow import Roboflow
+                import tempfile
+                self.upload_queue.put(('progress', "✅ Roboflow library loaded"))
+            except ImportError:
+                self.upload_queue.put(('progress', "❌ Roboflow library not found. Please install: pip install roboflow"))
+                return False
+            
+            # Initialize Roboflow
+            self.upload_queue.put(('progress', "🔄 Initializing Roboflow connection..."))
+            rf = Roboflow(api_key=api_key)
+            project = rf.workspace().project(project_id)
+            self.upload_queue.put(('progress', "✅ Connected to Roboflow"))
+            self.upload_queue.put(('progress', "📋 Upload Mode: Predictions (images will go to 'Unassigned')"))
+            
+            # Load COCO data
+            self.upload_queue.put(('progress', "📄 Loading COCO annotations..."))
+            with open(coco_file, 'r') as f:
+                coco_data = json.load(f)
+            
+            images_data = coco_data.get('images', [])
+            annotations_data = coco_data.get('annotations', [])
+            categories_data = coco_data.get('categories', [])
+            info_data = coco_data.get('info', {})
+            
+            total_images = len(images_data)
+            self.upload_queue.put(('progress', f"📂 Starting threaded upload of {total_images} images..."))
+            self.upload_queue.put(('progress', f"📊 Total annotations: {len(annotations_data)}"))
+            self.upload_queue.put(('progress', f"📈 Categories: {len(categories_data)}"))
+            self.upload_queue.put(('progress', "-" * 50))
+            
+            if not images_data:
+                self.upload_queue.put(('progress', "❌ No images found in COCO file"))
+                return False
+            
+            # Upload images with optimized approach
+            successful_uploads = 0
+            failed_uploads = 0
+            
+            for i, image_info in enumerate(images_data, 1):
+                try:
+                    # Get image path
+                    if 'file_path' in image_info and os.path.exists(image_info['file_path']):
+                        image_path = image_info['file_path']
+                    else:
+                        # Fallback: construct from images folder
+                        dataset_dir = os.path.dirname(coco_file)
+                        images_dir = os.path.join(dataset_dir, "images")
+                        image_path = os.path.join(images_dir, image_info['file_name'])
+                    
+                    filename = image_info['file_name']
+                    
+                    # Progress update every 5 images or at the end
+                    if i % 5 == 0 or i == total_images:
+                        progress_pct = (i / total_images) * 100
+                        self.upload_queue.put(('progress', f"📈 Progress: {progress_pct:.1f}% ({i}/{total_images})"))
+                    
+                    if not os.path.exists(image_path):
+                        self.upload_queue.put(('progress', f"❌ Missing: {filename}"))
+                        failed_uploads += 1
+                        continue
+                    
+                    # Get annotations for this specific image only
+                    image_annotations = [
+                        ann for ann in annotations_data 
+                        if ann['image_id'] == image_info['id']
+                    ]
+                    
+                    # Create minimal COCO file for this image only
+                    mini_coco = {
+                        "info": info_data,
+                        "images": [image_info],
+                        "annotations": image_annotations,
+                        "categories": categories_data
+                    }
+                    
+                    # Create temporary file with minimal COCO data
+                    temp_coco_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                            json.dump(mini_coco, temp_file)
+                            temp_coco_path = temp_file.name
+                        
+                        # Upload with minimal COCO file (much faster!)
+                        response = project.single_upload(
+                            image_path=image_path,
+                            annotation_path=temp_coco_path,  # Small file instead of huge one!
+                            is_prediction=True,  # Always upload as predictions
+                            num_retry_uploads=1  # Reduced retries for speed
+                        )
+                        
+                        successful_uploads += 1
+                        
+                        # Log every 10th success to avoid spam
+                        if i % 10 == 0 or len(image_annotations) > 0:
+                            ann_count = len(image_annotations)
+                            self.upload_queue.put(('progress', f"✅ Uploaded: {filename} ({ann_count} annotations)"))
+                        
+                    except Exception as upload_error:
+                        failed_uploads += 1
+                        self.upload_queue.put(('progress', f"❌ Failed: {filename} - {str(upload_error)[:50]}..."))
+                    
+                    finally:
+                        # Clean up temporary file
+                        if temp_coco_path and os.path.exists(temp_coco_path):
+                            try:
+                                os.unlink(temp_coco_path)
+                            except:
+                                pass
+                    
+                except Exception as e:
+                    failed_uploads += 1
+                    self.upload_queue.put(('progress', f"❌ Error processing {image_info.get('file_name', 'unknown')}: {str(e)[:50]}..."))
+            
+            # Final summary
+            self.upload_queue.put(('progress', "-" * 50))
+            self.upload_queue.put(('progress', "🎉 Threaded Upload Complete!"))
+            self.upload_queue.put(('progress', f"   ✅ Successful: {successful_uploads}"))
+            self.upload_queue.put(('progress', f"   ❌ Failed: {failed_uploads}"))
+            self.upload_queue.put(('progress', f"   📊 Total: {total_images}"))
+            self.upload_queue.put(('progress', f"   📁 Destination: Unassigned (Predictions for Review)"))
+            self.upload_queue.put(('progress', f"⚡ Upload was optimized with threading!"))
+            
+            return successful_uploads > 0
+            
+        except Exception as e:
+            self.upload_queue.put(('progress', f"❌ Upload failed: {str(e)}"))
+            return False
     
     def perform_roboflow_upload(self, coco_file, api_key, workspace_id, project_id):
         """Optimized Roboflow upload with minimal COCO files per image"""

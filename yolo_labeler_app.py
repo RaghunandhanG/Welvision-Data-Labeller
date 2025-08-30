@@ -268,6 +268,12 @@ class YOLOLabelerApp(tk.Tk):
         self.upload_queue = queue.Queue()
         self.upload_thread = None
         self.upload_in_progress = False
+        
+        # Default canvas dimensions (will be updated in create_image_preview_panel)
+        self.split_canvas_width = 400
+        self.split_canvas_height = 450
+        self.single_canvas_width = 800
+        self.single_canvas_height = 500
 
         
         # Detect optimal device
@@ -1368,28 +1374,37 @@ class YOLOLabelerApp(tk.Tk):
         self.split_container = tk.Frame(main_display_frame, bg=APP_BG_COLOR)
         self.split_container.pack(fill=tk.BOTH, expand=True, pady=10)
         
-        # Left side - Raw image (larger)
+        # Left side - Raw image (responsive size)
         raw_frame = tk.LabelFrame(self.split_container, text="🖼️ Original Image", 
                                  font=("Arial", 12, "bold"), fg="#17a2b8", bg=APP_BG_COLOR)
         raw_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 5))
         
-        self.raw_image_canvas = tk.Canvas(raw_frame, width=550, height=600, 
+        # Calculate responsive canvas size based on available space
+        available_width = int(self.winfo_screenwidth() * 0.25)  # ~25% of screen width
+        available_height = int(self.winfo_screenheight() * 0.4)  # ~40% of screen height
+        self.split_canvas_width = min(400, available_width)
+        self.split_canvas_height = min(450, available_height)
+        
+        self.raw_image_canvas = tk.Canvas(raw_frame, width=self.split_canvas_width, height=self.split_canvas_height, 
                                          bg="#1a1a1a", highlightthickness=0)
         self.raw_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
-        # Right side - Labeled image (larger)
+        # Right side - Labeled image (same size as raw)
         labeled_frame = tk.LabelFrame(self.split_container, text="🎯 Labeled Image", 
                                      font=("Arial", 12, "bold"), fg="#28a745", bg=APP_BG_COLOR)
         labeled_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 10))
         
-        self.labeled_image_canvas = tk.Canvas(labeled_frame, width=550, height=600, 
+        self.labeled_image_canvas = tk.Canvas(labeled_frame, width=self.split_canvas_width, height=self.split_canvas_height, 
                                              bg="#1a1a1a", highlightthickness=0)
         self.labeled_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
-        # Single view container (initially hidden)
+        # Single view container (initially hidden) - larger but still responsive
         self.single_container = tk.Frame(main_display_frame, bg=APP_BG_COLOR)
         
-        self.single_image_canvas = tk.Canvas(self.single_container, width=1100, height=700, 
+        self.single_canvas_width = min(800, int(self.winfo_screenwidth() * 0.5))
+        self.single_canvas_height = min(500, int(self.winfo_screenheight() * 0.45))
+        
+        self.single_image_canvas = tk.Canvas(self.single_container, width=self.single_canvas_width, height=self.single_canvas_height, 
                                            bg="#1a1a1a", highlightthickness=0)
         self.single_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
@@ -1520,10 +1535,10 @@ class YOLOLabelerApp(tk.Tk):
             
             # Calculate display size based on preview mode
             if self.preview_mode.get() == "split":
-                canvas_width, canvas_height = 300, 400  # Updated to match larger canvas
+                canvas_width, canvas_height = self.split_canvas_width, self.split_canvas_height
                 canvas = self.raw_image_canvas
             else:
-                canvas_width, canvas_height = 600, 500  # Updated to match larger canvas
+                canvas_width, canvas_height = self.single_canvas_width, self.single_canvas_height
                 canvas = self.single_image_canvas
             
             # Resize while maintaining aspect ratio
@@ -1698,10 +1713,10 @@ class YOLOLabelerApp(tk.Tk):
             
             # Calculate display size based on preview mode and larger canvas sizes
             if self.preview_mode.get() == "split":
-                canvas_width, canvas_height = 300, 400  # Updated to match the larger canvas
+                canvas_width, canvas_height = self.split_canvas_width, self.split_canvas_height
                 canvas = self.labeled_image_canvas
             else:
-                canvas_width, canvas_height = 600, 500  # Updated to match the larger canvas
+                canvas_width, canvas_height = self.single_canvas_width, self.single_canvas_height
                 canvas = self.single_image_canvas
             
             # Resize while maintaining aspect ratio
@@ -1830,53 +1845,70 @@ class YOLOLabelerApp(tk.Tk):
     def create_model_section(self, parent):
         """Create model management section"""
         model_frame = tk.LabelFrame(parent, text="Model Management", 
-                                   font=("Arial", 16, "bold"), 
+                                   font=("Arial", 14, "bold"), 
                                      fg="white", bg=APP_BG_COLOR, 
                                      relief="raised", bd=2)
-        model_frame.pack(fill=tk.X, pady=10)
+        model_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Model selection row
+        # Model selection section - vertical layout for better fit
         selection_frame = tk.Frame(model_frame, bg=APP_BG_COLOR)
-        selection_frame.pack(fill=tk.X, padx=20, pady=15)
+        selection_frame.pack(fill=tk.X, padx=15, pady=10)
         
         tk.Label(selection_frame, text="Select Model:", 
-                font=("Arial", 12, "bold"), 
-                fg="white", bg=APP_BG_COLOR).pack(side=tk.LEFT)
+                font=("Arial", 11, "bold"), 
+                fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W, pady=(0, 5))
+        
+        # Model dropdown and load button
+        model_controls = tk.Frame(selection_frame, bg=APP_BG_COLOR)
+        model_controls.pack(fill=tk.X, pady=(0, 10))
         
         self.model_var = tk.StringVar()
-        self.model_dropdown = ttk.Combobox(selection_frame, textvariable=self.model_var, 
-                                          font=("Arial", 11), width=50, state="readonly")
-        self.model_dropdown.pack(side=tk.LEFT, padx=(10, 20))
+        self.model_dropdown = ttk.Combobox(model_controls, textvariable=self.model_var, 
+                                          font=("Arial", 10), state="readonly")
+        self.model_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.model_dropdown.bind('<<ComboboxSelected>>', self.on_model_selected)
         
-        load_model_btn = tk.Button(selection_frame, text="Load Selected Model", 
-                                  font=("Arial", 11, "bold"), 
-                                  bg="#007bff", fg="white", 
-                                  command=self.load_selected_model)
-        load_model_btn.pack(side=tk.LEFT, padx=5)
+        # Prominent Load Model button
+        self.load_model_btn = tk.Button(model_controls, text="📥 Load Model", 
+                                       font=("Arial", 11, "bold"), 
+                                       bg="#007bff", fg="white", width=12,
+                                       command=self.load_selected_model)
+        self.load_model_btn.pack(side=tk.RIGHT)
         
-        # Model loading row
-        loading_frame = tk.Frame(model_frame, bg=APP_BG_COLOR)
-        loading_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+        # Model status indicator
+        self.model_status_var = tk.StringVar(value="No model loaded")
+        model_status_label = tk.Label(selection_frame, textvariable=self.model_status_var, 
+                                     font=("Arial", 10), fg="#ffc107", bg=APP_BG_COLOR,
+                                     wraplength=320, justify=tk.LEFT)
+        model_status_label.pack(anchor=tk.W, pady=(0, 10))
         
-        tk.Label(loading_frame, text="Load New Model:", 
-                font=("Arial", 12, "bold"), 
-                fg="white", bg=APP_BG_COLOR).pack(side=tk.LEFT)
+        # Separator line
+        separator = tk.Frame(selection_frame, height=1, bg="#555555")
+        separator.pack(fill=tk.X, pady=(5, 10))
         
-        browse_model_btn = tk.Button(loading_frame, text="Browse Model File", 
-                                    font=("Arial", 11, "bold"), 
-                                    bg="#28a745", fg="white", 
+        # Model loading section - compact vertical layout
+        tk.Label(selection_frame, text="Add New Model:", 
+                font=("Arial", 11, "bold"), 
+                fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W, pady=(0, 5))
+        
+        # Browse and add controls
+        loading_controls = tk.Frame(selection_frame, bg=APP_BG_COLOR)
+        loading_controls.pack(fill=tk.X, pady=(0, 5))
+        
+        browse_model_btn = tk.Button(loading_controls, text="Browse", 
+                                    font=("Arial", 10, "bold"), 
+                                    bg="#28a745", fg="white", width=8,
                                     command=self.browse_model_file)
-        browse_model_btn.pack(side=tk.LEFT, padx=(10, 0))
+        browse_model_btn.pack(side=tk.LEFT, padx=(0, 5))
         
         self.model_path_var = tk.StringVar()
-        model_path_entry = tk.Entry(loading_frame, textvariable=self.model_path_var, 
-                                   font=("Arial", 10), width=60, state="readonly")
-        model_path_entry.pack(side=tk.LEFT, padx=(10, 10))
+        model_path_entry = tk.Entry(loading_controls, textvariable=self.model_path_var, 
+                                   font=("Arial", 9), state="readonly")
+        model_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         
-        add_model_btn = tk.Button(loading_frame, text="Add to Database", 
-                                 font=("Arial", 11, "bold"), 
-                                 bg="#ffc107", fg="black", 
+        add_model_btn = tk.Button(loading_controls, text="Add", 
+                                 font=("Arial", 10, "bold"), 
+                                 bg="#ffc107", fg="black", width=6,
                                  command=self.add_model_to_database)
         add_model_btn.pack(side=tk.LEFT, padx=5)
     
@@ -2081,11 +2113,18 @@ class YOLOLabelerApp(tk.Tk):
             if model_names:
                 self.model_dropdown['values'] = model_names
                 self.model_dropdown.set(model_names[0])  # Select first model by default
+                self.model_status_var.set(f"🔸 Selected: {model_names[0]}")
+                self.load_model_btn.config(state='normal', bg="#007bff")
                 self.status_var.set(f"Loaded {len(model_names)} models from database")
             else:
-                self.status_var.set("No models found in database. Add models using 'Load New Model' section.")
+                self.model_dropdown['values'] = []
+                self.model_status_var.set("No models available")
+                self.load_model_btn.config(state='disabled', bg="#6c757d")
+                self.status_var.set("No models found in database. Add models using 'Add New Model' section.")
         except Exception as e:
             self.model_dropdown['values'] = []
+            self.model_status_var.set("Error loading models")
+            self.load_model_btn.config(state='disabled', bg="#6c757d")
             raise e
     
     def load_datasets(self):
@@ -2198,7 +2237,12 @@ class YOLOLabelerApp(tk.Tk):
     def on_model_selected(self, event=None):
         """Handle model selection change"""
         selected_model = self.model_var.get()
-        self.status_var.set(f"Selected model: {selected_model}")
+        if selected_model:
+            self.model_status_var.set(f"🔸 Selected: {selected_model}")
+            self.load_model_btn.config(state='normal', bg="#007bff")
+        else:
+            self.model_status_var.set("No model selected")
+            self.load_model_btn.config(state='disabled', bg="#6c757d")
     
     def load_selected_model(self):
         """Load the selected YOLO model"""
@@ -2207,10 +2251,17 @@ class YOLOLabelerApp(tk.Tk):
             messagebox.showerror("Error", "Please select a model first")
             return
         
+        # Update button state during loading
+        self.load_model_btn.config(state='disabled', text="⏳ Loading...", bg="#6c757d")
+        self.model_status_var.set("🔄 Loading model...")
+        self.update()
+        
         # Get model details from database
         model_info = self.db_manager.get_model_by_name(selected_model_name)
         if not model_info:
             messagebox.showerror("Error", "Model not found in database")
+            self.load_model_btn.config(state='normal', text="📥 Load Model", bg="#007bff")
+            self.model_status_var.set(f"❌ Model not found: {selected_model_name}")
             return
         
         model_path = model_info['path']
@@ -2218,6 +2269,8 @@ class YOLOLabelerApp(tk.Tk):
         # Check if model file exists
         if not os.path.exists(model_path):
             messagebox.showerror("Error", f"Model file not found: {model_path}")
+            self.load_model_btn.config(state='normal', text="📥 Load Model", bg="#007bff")
+            self.model_status_var.set(f"❌ File not found: {selected_model_name}")
             return
         
         try:
@@ -2255,6 +2308,8 @@ class YOLOLabelerApp(tk.Tk):
                 
                 self.current_model = model_info
                 self.status_var.set(f"Model loaded successfully on {device_info}: {selected_model_name}")
+                self.model_status_var.set(f"✅ Loaded: {selected_model_name} ({device_info})")
+                self.load_model_btn.config(state='normal', text="✅ Loaded", bg="#28a745")
                 messagebox.showinfo("Success", f"Model '{selected_model_name}' loaded successfully!\nDevice: {device_info}")
                 
             except Exception as device_error:
@@ -2269,6 +2324,8 @@ class YOLOLabelerApp(tk.Tk):
                     
                     self.current_model = model_info
                     self.status_var.set(f"Model loaded on CPU (GPU fallback): {selected_model_name}")
+                    self.model_status_var.set(f"✅ Loaded: {selected_model_name} (CPU - GPU fallback)")
+                    self.load_model_btn.config(state='normal', text="✅ Loaded", bg="#28a745")
                     messagebox.showinfo("Success", f"Model '{selected_model_name}' loaded successfully!\nDevice: CPU (GPU fallback due to compatibility issues)")
                     
                 except Exception as cpu_error:
@@ -2278,6 +2335,8 @@ class YOLOLabelerApp(tk.Tk):
             error_msg = str(e)
             messagebox.showerror("Error", f"Failed to load model: {error_msg}")
             self.status_var.set("Failed to load model")
+            self.model_status_var.set(f"❌ Failed to load: {selected_model_name}")
+            self.load_model_btn.config(state='normal', text="📥 Load Model", bg="#007bff")
     
     def upload_images(self):
         """Upload individual images for labeling"""

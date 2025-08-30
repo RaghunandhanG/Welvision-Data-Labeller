@@ -16,7 +16,7 @@ DATABASE_CONFIG = {
 # Application Settings
 APP_CONFIG = {
     'title': 'WelVision Data Labeller',
-    'geometry': '1600x1000',
+    'geometry': '1400x900',  # More reasonable default size
     'bg_color': '#0a2158',
     'version': 'v2.0'
 }

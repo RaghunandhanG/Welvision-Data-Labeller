@@ -40,5 +40,8 @@ YOLO_CONFIG = {
     'confidence_threshold': 0.25,
     'iou_threshold': 0.45,
     'max_detections': 1000,
-    'device': 'auto'  # 'auto', 'cpu', 'cuda', or specific GPU like 'cuda:0'
+    'device': 'auto',  # 'auto', 'cpu', 'cuda', or specific GPU like 'cuda:0'
+    'device_fallback': True,  # Auto-fallback to CPU if GPU fails
+    'memory_fraction': 0.9,  # Fraction of GPU memory to use (0.1 to 1.0)
+    'verbose_device_info': True,  # Show detailed device information in console
 }

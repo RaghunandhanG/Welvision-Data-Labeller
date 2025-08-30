@@ -311,50 +311,114 @@ class YOLOLabelerApp(tk.Tk):
         
         # Bind window close event
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Start periodic device status updates (every 10 seconds)
+        self.schedule_device_status_update()
     
     def detect_optimal_device(self):
-        """Detect the optimal device for YOLO inference with enhanced compatibility testing"""
+        """Detect the best available device for YOLO inference with enhanced GPU detection"""
+        print("🔍 Detecting optimal device for YOLO inference...")
+        
         try:
+            # Check for NVIDIA CUDA GPU
             if torch.cuda.is_available():
-                # Test CUDA compatibility with torchvision operations
+                gpu_count = torch.cuda.device_count()
+                gpu_name = torch.cuda.get_device_name(0)
+                
+                # Get GPU memory info
                 try:
-                    # Create a simple test tensor to verify CUDA + torchvision compatibility
+                    total_memory = torch.cuda.get_device_properties(0).total_memory
+                    memory_gb = total_memory / (1024**3)
+                    memory_info = f"{memory_gb:.1f}GB"
+                except:
+                    memory_info = "Unknown"
+                
+                print(f"🎮 NVIDIA GPU detected: {gpu_name}")
+                print(f"💾 GPU Memory: {memory_info}")
+                print(f"🔢 Available GPUs: {gpu_count}")
+                
+                # Test CUDA compatibility with comprehensive testing
+                try:
+                    print("🧪 Testing CUDA compatibility...")
+                    
+                    # Test basic CUDA operations
                     test_tensor = torch.randn(1, 3, 640, 640, device='cuda')
-                    # Test if we can create boxes for NMS (the operation that's failing)
+                    
+                    # Test CUDA tensor operations
                     test_boxes = torch.tensor([[10, 10, 50, 50]], device='cuda', dtype=torch.float32)
                     test_scores = torch.tensor([0.9], device='cuda', dtype=torch.float32)
                     
-                    # Try a simple torchvision operation that uses CUDA kernels
+                    # Test torchvision NMS operations (common failure point)
                     import torchvision
-                    # Test if torchvision NMS works on CUDA
                     _ = torchvision.ops.nms(test_boxes, test_scores, iou_threshold=0.5)
                     
-                    # If we get here, CUDA + torchvision works
+                    # Test memory allocation and cleanup
+                    torch.cuda.empty_cache()
+                    
+                    print("✅ CUDA compatibility test passed")
                     device = 'cuda'
-                    gpu_name = torch.cuda.get_device_name(0)
-                    self.status_var.set(f"GPU detected: {gpu_name} - CUDA + torchvision compatible") if hasattr(self, 'status_var') else None
-                    print(f"GPU detected: {gpu_name} - CUDA + torchvision fully compatible")
+                    
+                    if hasattr(self, 'status_var'):
+                        self.status_var.set(f"🎮 GPU Ready: {gpu_name} ({memory_info})")
+                    
                     return device
                     
                 except Exception as cuda_test_error:
-                    print(f"CUDA available but torchvision compatibility failed: {cuda_test_error}")
-                    print("Falling back to CPU due to CUDA/torchvision incompatibility")
+                    print(f"❌ CUDA compatibility test failed: {cuda_test_error}")
+                    print("⚠️ Falling back to CPU due to CUDA incompatibility")
                     device = 'cpu'
-                    self.status_var.set("GPU detected but incompatible - Using CPU") if hasattr(self, 'status_var') else None
+                    
+                    if hasattr(self, 'status_var'):
+                        self.status_var.set("⚠️ GPU detected but incompatible - Using CPU")
+                    
                     return device
                     
+            # Check for Apple Silicon MPS
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                device = 'mps'
-                self.status_var.set("Apple Silicon GPU detected - Using MPS acceleration") if hasattr(self, 'status_var') else None
-                print("Apple Silicon GPU detected - Will attempt MPS acceleration")
-                return device
+                print("🍎 Apple Silicon GPU detected")
+                
+                # Test MPS compatibility
+                try:
+                    print("🧪 Testing MPS compatibility...")
+                    test_tensor = torch.randn(100, 100).to('mps')
+                    result = test_tensor.matmul(test_tensor)
+                    _ = result.cpu()
+                    
+                    print("✅ MPS compatibility test passed")
+                    device = 'mps'
+                    
+                    if hasattr(self, 'status_var'):
+                        self.status_var.set("🍎 Apple Silicon GPU ready - MPS acceleration")
+                    
+                    return device
+                    
+                except Exception as mps_error:
+                    print(f"❌ MPS compatibility test failed: {mps_error}")
+                    print("⚠️ Falling back to CPU")
+                    device = 'cpu'
+                    
+                    if hasattr(self, 'status_var'):
+                        self.status_var.set("⚠️ Apple GPU detected but incompatible - Using CPU")
+                    
+                    return device
+            
+            # Default to CPU
             else:
+                print("💻 No GPU detected - Using CPU processing")
                 device = 'cpu'
-                self.status_var.set("No GPU detected - Using CPU processing") if hasattr(self, 'status_var') else None
-                print("No GPU detected - Using CPU processing")
+                
+                if hasattr(self, 'status_var'):
+                    self.status_var.set("💻 CPU processing mode")
+                
                 return device
+                
         except Exception as e:
-            print(f"Device detection error: {e}")
+            print(f"❌ Device detection error: {e}")
+            print("🔄 Defaulting to CPU for safety")
+            
+            if hasattr(self, 'status_var'):
+                self.status_var.set("⚠️ Device detection failed - Using CPU")
+            
             return 'cpu'
     
     def test_cuda_inference(self):
@@ -386,28 +450,41 @@ class YOLOLabelerApp(tk.Tk):
             return False
     
     def safe_yolo_inference(self, image_path, conf=None, max_det=None):
-        """Perform YOLO inference with automatic fallback from GPU to CPU if needed"""
+        """Perform YOLO inference with enhanced GPU/CPU fallback and device monitoring"""
         if conf is None:
             conf = YOLO_CONFIG['confidence_threshold']
         if max_det is None:
             max_det = YOLO_CONFIG['max_detections']
         
+        # Track inference attempts for better logging
+        device_used = self.optimal_device
+        
         try:
+            print(f"🔍 Starting inference on {device_used.upper()}: {os.path.basename(image_path)}")
+            
             # First attempt with optimal device
             results = self.yolo_model(
                 image_path,
                 conf=conf,
                 max_det=max_det,
-                device=self.optimal_device
+                device=self.optimal_device,
+                verbose=False
             )
+            
+            print(f"✅ Inference successful on {device_used.upper()}")
             return results
             
         except Exception as e:
-            # Check if it's a CUDA/torchvision/device compatibility issue
+            # Check if it's a device compatibility issue
             error_str = str(e).lower()
-            if any(keyword in error_str for keyword in ['cuda', 'torchvision::nms', 'backend', 'mps', 'device']):
-                print(f"GPU compatibility issue detected: {e}")
-                print("Automatically falling back to CPU for this inference")
+            is_device_error = any(keyword in error_str for keyword in [
+                'cuda', 'torchvision::nms', 'backend', 'mps', 'device', 
+                'gpu', 'memory', 'out of memory', 'runtime error'
+            ])
+            
+            if is_device_error and self.optimal_device != 'cpu':
+                print(f"⚠️ {device_used.upper()} inference failed: {e}")
+                print("🔄 Attempting automatic fallback to CPU...")
                 
                 try:
                     # Force CPU inference
@@ -415,23 +492,44 @@ class YOLOLabelerApp(tk.Tk):
                         image_path,
                         conf=conf,
                         max_det=max_det,
-                        device="cpu"
+                        device="cpu",
+                        verbose=False
                     )
+                    
+                    print("✅ CPU inference successful")
                     
                     # Update optimal device to CPU to avoid future issues
                     if self.optimal_device != 'cpu':
-                        print("Updating optimal device to CPU due to compatibility issues")
+                        print("📝 Updating optimal device to CPU due to compatibility issues")
                         self.optimal_device = 'cpu'
-                        if hasattr(self, 'yolo_model'):
-                            print("Moving model to CPU...")
+                        
+                        # Move model to CPU for future inferences
+                        try:
                             self.yolo_model.to("cpu")
+                            print("🔧 Model moved to CPU")
+                            
+                            # Update device status display
+                            self.update_device_status()
+                            
+                            # Update UI status if available
+                            if hasattr(self, 'model_status_var'):
+                                current_status = self.model_status_var.get()
+                                if "✅" in current_status:
+                                    model_name = current_status.split("✅")[1].split(" - ")[0].strip()
+                                    self.model_status_var.set(f"✅ {model_name} - CPU (Auto-fallback)")
+                                    
+                        except Exception as move_error:
+                            print(f"⚠️ Warning: Could not move model to CPU: {move_error}")
                     
                     return results
                     
                 except Exception as cpu_error:
-                    raise Exception(f"Inference failed on both GPU and CPU. GPU Error: {e}, CPU Error: {cpu_error}")
+                    error_msg = f"Inference failed on both {device_used.upper()} and CPU.\n{device_used.upper()} Error: {e}\nCPU Error: {cpu_error}"
+                    print(f"❌ {error_msg}")
+                    raise Exception(error_msg)
             else:
                 # Re-raise if it's not a device compatibility issue
+                print(f"❌ Inference failed with non-device error: {e}")
                 raise e
     
     def initialize_database(self):
@@ -2131,19 +2229,27 @@ class YOLOLabelerApp(tk.Tk):
         settings_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
     
     def create_status_panel(self, parent):
-        """Create status panel"""
+        """Create enhanced status panel with device information"""
         status_frame = tk.LabelFrame(parent, text="Status", 
                                     font=("Arial", 14, "bold"), 
                                     fg="white", bg=APP_BG_COLOR, 
                                     relief="raised", bd=2)
         status_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         
-        # Status section
-        self.status_var = tk.StringVar(value=f"🏁 Ready - Device: {self.optimal_device.upper()} - Load a model and upload images to begin")
+        # Device status section
+        self.device_status_var = tk.StringVar()
+        self.update_device_status()
+        device_status_label = tk.Label(status_frame, textvariable=self.device_status_var, 
+                                     font=("Arial", 10, "bold"), fg="#00ff88", bg=APP_BG_COLOR,
+                                     wraplength=280, justify=tk.LEFT)
+        device_status_label.pack(anchor=tk.W, padx=15, pady=(10, 5))
+        
+        # Main status section
+        self.status_var = tk.StringVar(value="🏁 Ready - Load a model and upload images to begin")
         status_label = tk.Label(status_frame, textvariable=self.status_var, 
                                font=("Arial", 10), fg="#cccccc", bg=APP_BG_COLOR,
                                wraplength=280, justify=tk.LEFT)
-        status_label.pack(anchor=tk.W, padx=15, pady=10)
+        status_label.pack(anchor=tk.W, padx=15, pady=(5, 5))
         
         # Dataset location info
         self.location_info_var = tk.StringVar(value="Dataset save location: datasets (default)")
@@ -2151,6 +2257,44 @@ class YOLOLabelerApp(tk.Tk):
                                      font=("Arial", 9), fg="#888888", bg=APP_BG_COLOR,
                                      wraplength=280, justify=tk.LEFT)
         location_info_label.pack(anchor=tk.W, padx=15, pady=(0, 10))
+    
+    def update_device_status(self):
+        """Update device status display with current device information"""
+        if hasattr(self, 'device_status_var'):
+            try:
+                if self.optimal_device == 'cuda' and torch.cuda.is_available():
+                    gpu_name = torch.cuda.get_device_name(0)
+                    try:
+                        total_memory = torch.cuda.get_device_properties(0).total_memory
+                        memory_gb = total_memory / (1024**3)
+                        allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
+                        memory_info = f"{allocated_memory:.1f}/{memory_gb:.1f}GB"
+                    except:
+                        memory_info = "Memory info unavailable"
+                    
+                    self.device_status_var.set(f"🎮 GPU: {gpu_name} ({memory_info})")
+                    
+                elif self.optimal_device == 'mps':
+                    self.device_status_var.set("🍎 Apple Silicon GPU (MPS)")
+                    
+                else:
+                    self.device_status_var.set("💻 CPU Processing")
+                    
+            except Exception as e:
+                self.device_status_var.set("⚠️ Device Status Unknown")
+                print(f"Error updating device status: {e}")
+    
+    def schedule_device_status_update(self):
+        """Schedule periodic device status updates"""
+        try:
+            # Update device status
+            self.update_device_status()
+            
+            # Schedule next update in 10 seconds (only if window still exists)
+            if hasattr(self, 'device_status_var'):
+                self.after(10000, self.schedule_device_status_update)
+        except Exception as e:
+            print(f"Error in device status update scheduler: {e}")
     
     def on_dataset_type_changed(self):
         """Handle dataset type radio button change"""
@@ -2302,7 +2446,7 @@ class YOLOLabelerApp(tk.Tk):
             self.load_model_btn.config(state='disabled', bg="#6c757d")
     
     def load_selected_model(self):
-        """Load the selected YOLO model"""
+        """Load the selected YOLO model with enhanced GPU/CPU handling"""
         selected_model_name = self.model_var.get()
         if not selected_model_name:
             messagebox.showerror("Error", "Please select a model first")
@@ -2335,65 +2479,163 @@ class YOLOLabelerApp(tk.Tk):
             self.status_var.set(f"🔄 Loading YOLO model: {selected_model_name}...")
             self.update()
             
+            print(f"📥 Loading model from: {model_path}")
             self.yolo_model = YOLO(model_path)
+            print("✅ Model loaded successfully on CPU")
             
-            # Try to move model to optimal device with comprehensive error handling
-            try:
-                if self.optimal_device == 'cuda':
-                    # Test CUDA compatibility before moving model
-                    print("Testing CUDA compatibility before moving model...")
-                    test_result = self.test_cuda_inference()
-                    
-                    if test_result:
-                        self.yolo_model.to("cuda")
-                        device_info = f"CUDA GPU ({torch.cuda.get_device_name(0)})"
-                        print(f"Model successfully loaded on CUDA GPU")
-                    else:
-                        print("CUDA compatibility test failed, using CPU instead")
-                        self.optimal_device = 'cpu'
-                        self.yolo_model.to("cpu")
-                        device_info = "CPU (CUDA incompatible)"
-                        
-                elif self.optimal_device == 'mps':
-                    self.yolo_model.to("mps")
-                    device_info = "Apple Silicon GPU (MPS)"
-                    print(f"Model successfully loaded on MPS")
-                else:
-                    self.yolo_model.to("cpu")
-                    device_info = "CPU"
-                    print(f"Model loaded on CPU")
-                
-                self.current_model = model_info
-                self.status_var.set(f"✅ Model loaded successfully on {device_info}: {selected_model_name}")
-                self.model_status_var.set(f"✅ Loaded: {selected_model_name} ({device_info})")
-                self.load_model_btn.config(state='normal', text="✅ Loaded", bg="#28a745")
-                messagebox.showinfo("Success", f"Model '{selected_model_name}' loaded successfully!\nDevice: {device_info}")
-                
-            except Exception as device_error:
-                # Fallback to CPU if device fails (e.g., CUDA/torchvision compatibility issues)
-                print(f"Device error: {device_error}")
-                print("Falling back to CPU due to device compatibility issues")
-                
-                try:
-                    self.yolo_model.to("cpu")
-                    self.optimal_device = 'cpu'
-                    device_info = "CPU (GPU fallback due to compatibility issues)"
-                    
-                    self.current_model = model_info
-                    self.status_var.set(f"Model loaded on CPU (GPU fallback): {selected_model_name}")
-                    self.model_status_var.set(f"✅ Loaded: {selected_model_name} (CPU - GPU fallback)")
-                    self.load_model_btn.config(state='normal', text="✅ Loaded", bg="#28a745")
-                    messagebox.showinfo("Success", f"Model '{selected_model_name}' loaded successfully!\nDevice: CPU (GPU fallback due to compatibility issues)")
-                    
-                except Exception as cpu_error:
-                    raise Exception(f"Failed to load on both GPU and CPU: GPU Error: {device_error}, CPU Error: {cpu_error}")
+            # Determine the best device and move model
+            device_info = self.setup_model_device()
+            
+            # Update UI with success information
+            self.current_model = model_info
+            self.status_var.set(f"✅ Model loaded successfully on {device_info['name']}: {selected_model_name}")
+            self.model_status_var.set(f"✅ {selected_model_name} - {device_info['name']}")
+            self.load_model_btn.config(state='normal', text="✅ Loaded", bg="#28a745")
+            
+            # Update device status display
+            self.update_device_status()
+            
+            # Show detailed success message
+            success_message = (
+                f"Model '{selected_model_name}' loaded successfully!\n\n"
+                f"🖥️ Device: {device_info['name']}\n"
+                f"📊 Classes: {len(self.yolo_model.names)} detection classes\n"
+                f"📁 Path: {model_path}"
+            )
+            
+            if device_info['memory']:
+                success_message += f"\n💾 GPU Memory: {device_info['memory']}"
+            
+            messagebox.showinfo("Model Loaded Successfully", success_message)
             
         except Exception as e:
-            error_msg = str(e)
-            messagebox.showerror("Error", f"Failed to load model: {error_msg}")
-            self.status_var.set("Failed to load model")
-            self.model_status_var.set(f"❌ Failed to load: {selected_model_name}")
+            error_msg = f"Failed to load model: {str(e)}"
+            print(f"❌ {error_msg}")
+            
             self.load_model_btn.config(state='normal', text="📥 Load Model", bg="#007bff")
+            self.model_status_var.set(f"❌ Load failed: {selected_model_name}")
+            self.status_var.set(f"❌ Model loading failed: {str(e)}")
+            messagebox.showerror("Model Loading Error", error_msg)
+    
+    def setup_model_device(self):
+        """Setup the loaded model on the optimal device with comprehensive error handling"""
+        device_info = {
+            'device': 'cpu',
+            'name': 'CPU',
+            'memory': None,
+            'success': False
+        }
+        
+        try:
+            print(f"🔧 Setting up model on device: {self.optimal_device}")
+            
+            if self.optimal_device == 'cuda':
+                # Test CUDA compatibility before moving model
+                print("🧪 Testing CUDA compatibility with loaded model...")
+                test_result = self.test_cuda_inference()
+                
+                if test_result:
+                    print("🎮 Moving model to CUDA GPU...")
+                    self.yolo_model.to("cuda")
+                    
+                    # Get GPU info
+                    gpu_name = torch.cuda.get_device_name(0)
+                    try:
+                        total_memory = torch.cuda.get_device_properties(0).total_memory
+                        memory_gb = total_memory / (1024**3)
+                        memory_info = f"{memory_gb:.1f}GB"
+                    except:
+                        memory_info = "Unknown"
+                    
+                    device_info.update({
+                        'device': 'cuda',
+                        'name': f"NVIDIA {gpu_name}",
+                        'memory': memory_info,
+                        'success': True
+                    })
+                    
+                    print(f"✅ Model successfully loaded on CUDA: {gpu_name}")
+                else:
+                    print("❌ CUDA compatibility test failed, falling back to CPU")
+                    self.optimal_device = 'cpu'
+                    self.yolo_model.to("cpu")
+                    device_info.update({
+                        'device': 'cpu',
+                        'name': 'CPU (CUDA incompatible)',
+                        'success': True
+                    })
+                        
+            elif self.optimal_device == 'mps':
+                try:
+                    print("🍎 Moving model to Apple Silicon GPU (MPS)...")
+                    self.yolo_model.to("mps")
+                    device_info.update({
+                        'device': 'mps',
+                        'name': 'Apple Silicon GPU (MPS)',
+                        'success': True
+                    })
+                    print("✅ Model successfully loaded on MPS")
+                    
+                except Exception as mps_error:
+                    print(f"❌ MPS loading failed: {mps_error}")
+                    print("🔄 Falling back to CPU")
+                    self.optimal_device = 'cpu'
+                    self.yolo_model.to("cpu")
+                    device_info.update({
+                        'device': 'cpu',
+                        'name': 'CPU (MPS fallback)',
+                        'success': True
+                    })
+            else:
+                # CPU mode
+                print("💻 Using CPU for model inference")
+                self.yolo_model.to("cpu")
+                device_info.update({
+                    'device': 'cpu',
+                    'name': 'CPU',
+                    'success': True
+                })
+            
+            return device_info
+            
+        except Exception as device_error:
+            print(f"❌ Device setup error: {device_error}")
+            print("🔄 Forcing CPU fallback")
+            
+            try:
+                self.yolo_model.to("cpu")
+                self.optimal_device = 'cpu'
+                device_info.update({
+                    'device': 'cpu',
+                    'name': 'CPU (forced fallback)',
+                    'success': True
+                })
+                print("✅ Successfully fell back to CPU")
+                
+            except Exception as cpu_error:
+                print(f"❌ CPU fallback also failed: {cpu_error}")
+                device_info.update({
+                    'device': 'cpu',
+                    'name': 'CPU (error state)',
+                    'success': False
+                })
+            
+            return device_info
+        
+        except Exception as e:
+            error_msg = f"Failed to load model: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            # Get the selected model name safely
+            try:
+                selected_name = self.model_var.get() or "Unknown Model"
+            except:
+                selected_name = "Unknown Model"
+            
+            self.load_model_btn.config(state='normal', text="📥 Load Model", bg="#007bff")
+            self.model_status_var.set(f"❌ Load failed: {selected_name}")
+            self.status_var.set(f"❌ Model loading failed: {str(e)}")
+            messagebox.showerror("Model Loading Error", error_msg)
     
     def upload_images(self):
         """Upload individual images for labeling"""

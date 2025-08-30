@@ -3944,113 +3944,20 @@ This dataset is ready for upload to Roboflow!"""
             self.log_rf_status(f"Error: {str(e)}")
     
     def on_workspace_selected(self, event=None):
-        """Step 2: Load projects for selected workspace"""
+        """Step 2: Load projects for selected workspace (legacy function - now using default workspace)"""
         try:
-            workspace_name = self.rf_workspace_var.get()
-            if not workspace_name or not hasattr(self, 'roboflow_instance'):
+            # Since we use the default workspace automatically, this function is not needed
+            # but kept for compatibility
+            if not hasattr(self, 'roboflow_instance'):
                 return
             
-            self.rf_workspace_status_var.set("🟡 Loading projects...")
-            self.rf_project_dropdown.config(state="disabled")
-            self.rf_project_var.set("")
-            self.update()
+            self.log_rf_status("Using default workspace (workspace selection not needed)")
             
-            self.log_rf_status(f"Loading projects for workspace: {workspace_name}")
+            # Projects are already loaded in test_api_and_load_projects
+            return
             
-            # Get projects for workspace - Use discovered methods!
-            workspace = self.roboflow_instance.workspace(workspace_name)
-            projects = []
-            
-            try:
-                # Use the project_list property we discovered!
-                self.log_rf_status(f"🔍 Using project_list property...")
-                project_list = workspace.project_list
-                
-                for project_info in project_list:
-                    project_id = project_info.get('id', '')
-                    project_name = project_info.get('name', '')
-                    
-                    # Extract just the project slug from the full ID
-                    if '/' in project_id:
-                        project_slug = project_id.split('/')[-1]
-                    else:
-                        project_slug = project_id
-                    
-                    if project_slug:
-                        projects.append(project_slug)
-                        self.log_rf_status(f"Found project: {project_name} (slug: {project_slug})")
-                
-                self.log_rf_status(f"Total projects discovered: {len(projects)}")
-                
-                # Also try the list_projects() method as backup
-                if not projects:
-                    self.log_rf_status(f"🔍 Trying list_projects() method...")
-                    try:
-                        projects_result = workspace.list_projects()
-                        self.log_rf_status(f"list_projects() returned: {projects_result}")
-                        
-                        if isinstance(projects_result, list):
-                            for proj in projects_result:
-                                if isinstance(proj, dict):
-                                    project_slug = proj.get('id', '').split('/')[-1] if '/' in proj.get('id', '') else proj.get('id', '')
-                                    if project_slug:
-                                        projects.append(project_slug)
-                                        
-                    except Exception as list_error:
-                        self.log_rf_status(f"list_projects() failed: {list_error}")
-                
-                # Also try the projects() method as backup
-                if not projects:
-                    self.log_rf_status(f"🔍 Trying projects() method...")
-                    try:
-                        projects_result = workspace.projects()
-                        self.log_rf_status(f"projects() returned: {projects_result}")
-                        
-                        if hasattr(projects_result, '__iter__'):
-                            for proj in projects_result:
-                                project_slug = getattr(proj, 'slug', getattr(proj, 'id', str(proj)))
-                                if '/' in project_slug:
-                                    project_slug = project_slug.split('/')[-1]
-                                if project_slug:
-                                    projects.append(project_slug)
-                                    
-                    except Exception as projects_error:
-                        self.log_rf_status(f"projects() failed: {projects_error}")
-                
-                if not projects:
-                    # If no projects discovered, use known fallback
-                    projects = ["chatter-scratch-damage-2"]
-                    self.log_rf_status("Using fallback project ID")
-                
-                self.log_rf_status(f"Final projects list: {projects}")
-                
-            except Exception as proj_error:
-                self.log_rf_status(f"Project discovery failed: {proj_error}")
-                # Fallback to known project
-                projects = ["chatter-scratch-damage-2"]
-            
-            # Update project dropdown
-            self.rf_project_dropdown['values'] = projects
-            self.rf_project_dropdown.config(state="readonly")
-            
-            if projects:
-                self.rf_project_dropdown.set(projects[0])
-                self.rf_workspace_status_var.set(f"✅ Workspace loaded. Found {len(projects)} project(s).")
-                self.rf_project_status_var.set(f"✅ Found {len(projects)} project(s). Select one to continue.")
-                
-                # Enable step 3
-                self.rf_project_dropdown.config(state="readonly")
-                
-                # Auto-select first project
-                self.on_project_selected()
-            else:
-                self.rf_workspace_status_var.set("⚠️ No projects found in workspace")
-                self.rf_project_status_var.set("⚠️ No projects found")
-                
         except Exception as e:
-            error_msg = f"Error loading projects: {str(e)}"
-            self.rf_workspace_status_var.set(f"🔴 {error_msg}")
-            self.rf_project_status_var.set(f"🔴 Error: {str(e)}")
+            error_msg = f"Error in workspace selection: {str(e)}"
             self.log_rf_status(error_msg)
     
     def create_roboflow_project(self):
@@ -4458,7 +4365,6 @@ This dataset is ready for upload to Roboflow!"""
                         
                         # Check if all steps are complete
                         if (hasattr(self, 'roboflow_instance') and 
-                            self.rf_workspace_var.get() and 
                             self.rf_project_var.get()):
                             self.rf_upload_btn.config(state="normal")
                     

@@ -618,9 +618,9 @@ class YOLOLabelerApp(tk.Tk):
         self.preview_frame = tk.Frame(self.notebook, bg=APP_BG_COLOR)
         self.notebook.add(self.preview_frame, text="Dataset Preview")
         
-        # Tab 3: Roboflow Upload
+        # Tab 3: Roboflow Management
         self.roboflow_frame = tk.Frame(self.notebook, bg=APP_BG_COLOR)
-        self.notebook.add(self.roboflow_frame, text="Roboflow Upload")
+        self.notebook.add(self.roboflow_frame, text="Roboflow Projects")
         
         # Setup labeling tab (original functionality)
         self.setup_labeling_tab()
@@ -904,7 +904,7 @@ class YOLOLabelerApp(tk.Tk):
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
         # Title
-        title_label = tk.Label(main_frame, text="🚀 Roboflow Dataset Upload", 
+        title_label = tk.Label(main_frame, text="🚀 Roboflow Project Management & Upload", 
                               font=("Arial", 18, "bold"), fg="white", bg=APP_BG_COLOR)
         title_label.pack(pady=(0, 20))
         
@@ -936,6 +936,75 @@ class YOLOLabelerApp(tk.Tk):
         api_status_label = tk.Label(step1_frame, textvariable=self.rf_api_status_var, 
                                    font=("Arial", 9), fg="#ffcc00", bg=APP_BG_COLOR)
         api_status_label.pack(padx=10, pady=(0, 10))
+        
+        # Step 1.5: Create New Project (Optional)
+        step1_5_frame = tk.LabelFrame(main_frame, text="Step 1.5: ✨ Create New Project (Optional)", 
+                                     font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR,
+                                     relief=tk.RAISED, bd=2)
+        step1_5_frame.pack(fill="x", pady=(0, 15))
+        
+        # Project creation info
+        create_info = tk.Label(step1_5_frame, text="Create a new project in your Roboflow workspace", 
+                              font=("Arial", 9), fg="#cccccc", bg=APP_BG_COLOR)
+        create_info.pack(padx=10, pady=(10, 2))
+        
+        # Project type info
+        type_info = tk.Label(step1_5_frame, text="💡 Object Detection: For bounding boxes | Classification: For image labels", 
+                            font=("Arial", 8), fg="#888888", bg=APP_BG_COLOR)
+        type_info.pack(padx=10, pady=(0, 8))
+        
+        # Project name input
+        name_container = tk.Frame(step1_5_frame, bg=APP_BG_COLOR)
+        name_container.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(name_container, text="Project Name:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        self.rf_new_project_name_var = tk.StringVar()
+        self.rf_new_project_name_entry = tk.Entry(name_container, textvariable=self.rf_new_project_name_var, 
+                                                 font=("Arial", 10), width=30)
+        self.rf_new_project_name_entry.pack(side="left", padx=(5, 10))
+        
+        # Project type dropdown
+        type_container = tk.Frame(step1_5_frame, bg=APP_BG_COLOR)
+        type_container.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(type_container, text="Project Type:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        self.rf_new_project_type_var = tk.StringVar(value="object-detection")
+        self.rf_new_project_type_dropdown = ttk.Combobox(type_container, 
+                                                        textvariable=self.rf_new_project_type_var,
+                                                        values=["object-detection", "classification", "instance-segmentation", "semantic-segmentation"],
+                                                        font=("Arial", 10), width=25, state="readonly")
+        self.rf_new_project_type_dropdown.pack(side="left", padx=(5, 10))
+        
+        # License dropdown
+        license_container = tk.Frame(step1_5_frame, bg=APP_BG_COLOR)
+        license_container.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(license_container, text="License:", font=("Arial", 10, "bold"), 
+                fg="white", bg=APP_BG_COLOR, width=15, anchor="w").pack(side="left")
+        self.rf_new_project_license_var = tk.StringVar(value="private")
+        self.rf_new_project_license_dropdown = ttk.Combobox(license_container, 
+                                                           textvariable=self.rf_new_project_license_var,
+                                                           values=["private", "MIT", "CC BY 4.0", "Public Domain"],
+                                                           font=("Arial", 10), width=25, state="readonly")
+        self.rf_new_project_license_dropdown.pack(side="left", padx=(5, 10))
+        
+        # Create project button
+        create_button_container = tk.Frame(step1_5_frame, bg=APP_BG_COLOR)
+        create_button_container.pack(pady=10)
+        
+        self.rf_create_project_btn = tk.Button(create_button_container, text="🆕 Create New Project", 
+                                              command=self.create_roboflow_project,
+                                              bg="#6f42c1", fg="white", font=("Arial", 10, "bold"),
+                                              relief=tk.RAISED, bd=2, padx=15, pady=5, state="disabled")
+        self.rf_create_project_btn.pack()
+        
+        # Project creation status
+        self.rf_create_project_status_var = tk.StringVar(value="💡 Load projects first, then create new ones")
+        create_status_label = tk.Label(step1_5_frame, textvariable=self.rf_create_project_status_var, 
+                                      font=("Arial", 9), fg="#cccccc", bg=APP_BG_COLOR)
+        create_status_label.pack(padx=10, pady=(0, 10))
         
         # Step 2: Project Selection
         step2_frame = tk.LabelFrame(main_frame, text="Step 2: 📂 Project Selection", 
@@ -1000,7 +1069,7 @@ class YOLOLabelerApp(tk.Tk):
         upload_container = tk.Frame(step4_frame, bg=APP_BG_COLOR)
         upload_container.pack(pady=15)
         
-        self.rf_upload_btn = tk.Button(upload_container, text="🚀 Upload as Predictions to Roboflow", 
+        self.rf_upload_btn = tk.Button(upload_container, text="🚀 Upload Dataset to Roboflow", 
                                       font=("Arial", 14, "bold"), bg="#28a745", fg="white",
                                       command=self.upload_to_roboflow, relief=tk.RAISED, bd=3,
                                       padx=20, pady=10, state="disabled")
@@ -3846,8 +3915,15 @@ This dataset is ready for upload to Roboflow!"""
                     self.rf_project_dropdown.set(projects[0])
                     self.rf_project_status_var.set(f"✅ Found {len(projects)} project(s). Select one to continue.")
                     self.log_rf_status(f"Projects loaded: {', '.join(projects)}")
+                    
+                    # Enable project creation
+                    self.rf_create_project_btn.config(state="normal")
+                    self.rf_create_project_status_var.set("✨ Ready to create new projects")
                 else:
                     self.rf_project_status_var.set("⚠️ No projects found")
+                    # Still enable project creation even if no projects found
+                    self.rf_create_project_btn.config(state="normal")
+                    self.rf_create_project_status_var.set("✨ Ready to create your first project")
                 
                 self.rf_api_status_var.set(f"🟢 API valid! {len(projects)} projects loaded.")
                 self.rf_test_api_btn.config(state="normal", text="✅ Projects Loaded")
@@ -3977,6 +4053,194 @@ This dataset is ready for upload to Roboflow!"""
             self.rf_project_status_var.set(f"🔴 Error: {str(e)}")
             self.log_rf_status(error_msg)
     
+    def create_roboflow_project(self):
+        """Create a new project in Roboflow workspace using REST API"""
+        try:
+            # Validate inputs
+            project_name = self.rf_new_project_name_var.get().strip()
+            if not project_name:
+                messagebox.showerror("Error", "Please enter a project name!")
+                return
+            
+            project_type = self.rf_new_project_type_var.get()
+            license_type = self.rf_new_project_license_var.get()
+            api_key = self.rf_api_key_var.get().strip()
+            
+            if not api_key:
+                messagebox.showerror("Error", "Please enter your API key first!")
+                return
+            
+            # Update UI to show creation in progress
+            self.rf_create_project_btn.config(state="disabled", text="⏳ Creating...")
+            self.rf_create_project_status_var.set("🟡 Creating new project...")
+            self.update()
+            
+            self.log_rf_status(f"🆕 Creating new project: {project_name}")
+            self.log_rf_status(f"   Type: {project_type}")
+            self.log_rf_status(f"   License: {license_type}")
+            self.log_rf_status(f"   Using Roboflow REST API...")
+            
+            # Get workspace info first
+            try:
+                import requests
+                
+                # Get workspace information
+                self.log_rf_status("🔍 Getting workspace information...")
+                workspace_response = requests.get(f"https://api.roboflow.com/?api_key={api_key}")
+                
+                if workspace_response.status_code != 200:
+                    raise Exception(f"Failed to get workspace info: {workspace_response.status_code}")
+                
+                workspace_data = workspace_response.json()
+                workspace_id = workspace_data.get('workspace', 'default')
+                self.log_rf_status(f"✅ Workspace ID: {workspace_id}")
+                
+                # Create annotation name (alphanumeric only as per docs)
+                import re
+                annotation_name = re.sub(r'[^a-zA-Z0-9]', '', project_name.lower())[:20]  # Max 20 chars, alphanumeric only
+                if not annotation_name:
+                    annotation_name = "annotation1"
+                
+                self.log_rf_status(f"📝 Annotation group: {annotation_name}")
+                
+                # Prepare project creation payload according to documentation
+                payload = {
+                    "name": project_name,
+                    "type": project_type,
+                    "annotation": annotation_name
+                }
+                
+                # Add license if not private (as per docs requirement)
+                if license_type.lower() != "private":
+                    payload["license"] = license_type
+                
+                self.log_rf_status(f"📦 Payload: {payload}")
+                
+                # Make POST request to create project
+                create_url = f"https://api.roboflow.com/{workspace_id}/projects"
+                headers = {
+                    'Content-Type': 'application/json'
+                }
+                params = {
+                    'api_key': api_key
+                }
+                
+                self.log_rf_status(f"🌐 POST {create_url}")
+                create_response = requests.post(
+                    create_url,
+                    json=payload,
+                    headers=headers,
+                    params=params
+                )
+                
+                self.log_rf_status(f"📋 Response Status: {create_response.status_code}")
+                self.log_rf_status(f"📋 Response Text: {create_response.text}")
+                
+                if create_response.status_code == 200 or create_response.status_code == 201:
+                    # Success!
+                    response_data = create_response.json()
+                    self.log_rf_status(f"✅ Project created successfully!")
+                    self.log_rf_status(f"📋 Response Data: {response_data}")
+                    
+                    # Extract project ID/slug
+                    project_id = response_data.get('id', '')
+                    if '/' in project_id:
+                        project_slug = project_id.split('/')[-1]
+                    else:
+                        project_slug = project_id
+                    
+                    if not project_slug:
+                        # Fallback: create slug from name
+                        project_slug = project_name.lower().replace(' ', '-').replace('_', '-')
+                    
+                    self.log_rf_status(f"📁 Project slug: {project_slug}")
+                    
+                    # Update the project dropdown with the new project
+                    current_projects = list(self.rf_project_dropdown['values'])
+                    if project_slug not in current_projects:
+                        current_projects.append(project_slug)
+                        self.rf_project_dropdown['values'] = current_projects
+                    
+                    # Select the newly created project
+                    self.rf_project_dropdown.set(project_slug)
+                    self.rf_project_var.set(project_slug)
+                    
+                    # Update status
+                    self.rf_create_project_status_var.set(f"✅ Project '{project_name}' created successfully!")
+                    self.rf_project_status_var.set(f"✅ Using newly created project: {project_name}")
+                    
+                    # Clear the input fields
+                    self.rf_new_project_name_var.set("")
+                    
+                    # Show success message
+                    messagebox.showinfo("Success", 
+                                      f"Project '{project_name}' created successfully!\n\n"
+                                      f"Type: {project_type}\n"
+                                      f"License: {license_type}\n"
+                                      f"Project ID: {project_id}\n"
+                                      f"Annotation Group: {annotation_name}\n\n"
+                                      f"The project has been automatically selected for upload.")
+                    
+                    # Refresh project list and trigger selection
+                    try:
+                        self.test_api_and_load_projects()
+                    except Exception as refresh_error:
+                        self.log_rf_status(f"⚠️ Could not refresh project list: {refresh_error}")
+                    
+                    # Trigger project selection
+                    self.on_project_selected()
+                    
+                else:
+                    # Failed
+                    try:
+                        error_data = create_response.json()
+                        error_message = error_data.get('error', {}).get('message', f"HTTP {create_response.status_code}")
+                    except:
+                        error_message = f"HTTP {create_response.status_code}: {create_response.text}"
+                    
+                    self.log_rf_status(f"❌ Project creation failed: {error_message}")
+                    
+                    # Provide helpful error messages
+                    if create_response.status_code == 400:
+                        suggestion = "Check project name (must be unique) and parameters."
+                    elif create_response.status_code == 401:
+                        suggestion = "Check your API key permissions."
+                    elif create_response.status_code == 403:
+                        suggestion = "You may not have permission to create projects in this workspace."
+                    elif create_response.status_code == 409:
+                        suggestion = "A project with this name already exists. Try a different name."
+                    else:
+                        suggestion = "Please check your internet connection and try again."
+                    
+                    messagebox.showerror("Project Creation Failed", 
+                                       f"Failed to create project '{project_name}':\n\n"
+                                       f"Error: {error_message}\n\n"
+                                       f"Suggestion: {suggestion}")
+                    
+                    self.rf_create_project_status_var.set(f"❌ Creation failed: {error_message}")
+                    
+            except requests.exceptions.RequestException as req_error:
+                error_msg = f"Network error: {str(req_error)}"
+                self.log_rf_status(f"❌ {error_msg}")
+                self.rf_create_project_status_var.set(f"❌ Network error")
+                messagebox.showerror("Network Error", f"Network error during project creation:\n{error_msg}")
+                
+            except Exception as api_error:
+                error_msg = f"API error: {str(api_error)}"
+                self.log_rf_status(f"❌ {error_msg}")
+                self.rf_create_project_status_var.set(f"❌ API error")
+                messagebox.showerror("API Error", f"API error during project creation:\n{error_msg}")
+                
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            self.log_rf_status(f"❌ {error_msg}")
+            self.rf_create_project_status_var.set(f"❌ Error: {str(e)}")
+            messagebox.showerror("Error", error_msg)
+            
+        finally:
+            # Re-enable the create button
+            self.rf_create_project_btn.config(state="normal", text="🆕 Create New Project")
+    
     def on_project_selected(self, event=None):
         """Step 2: Handle project selection"""
         try:
@@ -3993,26 +4257,93 @@ This dataset is ready for upload to Roboflow!"""
             # Validate project access
             try:
                 workspace = self.roboflow_instance.workspace()
-                project = workspace.project(project_name)
                 
-                # Get project details
-                project_display_name = getattr(project, 'name', project_name)
-                project_type = getattr(project, 'type', 'unknown')
-                project_images = getattr(project, 'images', 0)
+                # Try multiple methods to access the project
+                project = None
+                access_error = None
                 
-                self.log_rf_status(f"Project details: {project_display_name} ({project_type}, {project_images} images)")
+                # Method 1: Try direct project access
+                try:
+                    project = workspace.project(project_name)
+                    self.log_rf_status(f"✅ Direct project access successful")
+                except Exception as direct_error:
+                    self.log_rf_status(f"⚠️ Direct access failed: {direct_error}")
+                    access_error = direct_error
                 
-                self.rf_project_status_var.set(f"✅ Project '{project_display_name}' selected successfully")
+                # Method 2: If direct access fails, try to find the project in the list
+                if not project:
+                    try:
+                        self.log_rf_status(f"🔍 Searching for project in workspace...")
+                        projects_list = workspace.list_projects()
+                        
+                        for proj in projects_list:
+                            proj_slug = getattr(proj, 'slug', getattr(proj, 'id', str(proj)))
+                            proj_name = getattr(proj, 'name', proj_slug)
+                            
+                            self.log_rf_status(f"   Found: {proj_name} (slug: {proj_slug})")
+                            
+                            # Try to match by slug or name
+                            if proj_slug == project_name or proj_name.lower() == project_name.lower():
+                                project = proj
+                                self.log_rf_status(f"✅ Found matching project: {proj_name}")
+                                break
+                                
+                    except Exception as list_error:
+                        self.log_rf_status(f"⚠️ Project list access failed: {list_error}")
                 
-                # Check if dataset is also selected
-                dataset_name = self.rf_dataset_var.get()
-                if dataset_name and hasattr(self, 'current_rf_dataset_path'):
-                    self.rf_upload_btn.config(state="normal")
-                    self.log_rf_status(f"🎯 Ready to upload '{dataset_name}' to '{project_name}'")
+                # Method 3: Try REST API to get project info
+                if not project:
+                    try:
+                        import requests
+                        api_key = self.rf_api_key_var.get().strip()
+                        workspace_response = requests.get(f"https://api.roboflow.com/?api_key={api_key}")
+                        workspace_data = workspace_response.json()
+                        workspace_id = workspace_data.get('workspace', 'default')
+                        
+                        # Try to get project via REST API
+                        project_url = f"https://api.roboflow.com/{workspace_id}/{project_name}"
+                        project_response = requests.get(project_url, params={"api_key": api_key})
+                        
+                        if project_response.status_code == 200:
+                            project_data = project_response.json()
+                            
+                            # Create a mock project object
+                            class MockProjectInfo:
+                                def __init__(self, data):
+                                    self.name = data.get('project', {}).get('name', project_name)
+                                    self.type = data.get('project', {}).get('type', 'object-detection')
+                                    self.images = data.get('project', {}).get('images', 0)
+                                    self.id = project_name
+                            
+                            project = MockProjectInfo(project_data)
+                            self.log_rf_status(f"✅ REST API project access successful")
+                        else:
+                            self.log_rf_status(f"⚠️ REST API access failed: {project_response.status_code}")
+                            
+                    except Exception as rest_error:
+                        self.log_rf_status(f"⚠️ REST API project validation failed: {rest_error}")
+                
+                if project:
+                    # Get project details
+                    project_display_name = getattr(project, 'name', project_name)
+                    project_type = getattr(project, 'type', 'unknown')
+                    project_images = getattr(project, 'images', 0)
+
+                    self.log_rf_status(f"Project details: {project_display_name} ({project_type}, {project_images} images)")
+
+                    self.rf_project_status_var.set(f"✅ Project '{project_display_name}' selected successfully")
+
+                    # Check if dataset is also selected
+                    dataset_name = self.rf_dataset_var.get()
+                    if dataset_name and hasattr(self, 'current_rf_dataset_path'):
+                        self.rf_upload_btn.config(state="normal")
+                        self.log_rf_status(f"🎯 Ready to upload '{dataset_name}' to '{project_name}'")
+                    else:
+                        self.rf_upload_btn.config(state="disabled")
+                        self.rf_dataset_info_var.set("Select a dataset to upload to this project")
                 else:
-                    self.rf_upload_btn.config(state="disabled")
-                    self.rf_dataset_info_var.set("Select a dataset to upload to this project")
-                
+                    raise Exception(f"Could not access project '{project_name}'. Original error: {access_error}")
+                    
             except Exception as project_error:
                 self.rf_project_status_var.set(f"🔴 Error accessing project: {project_error}")
                 self.log_rf_status(f"Project access error: {project_error}")
@@ -4140,7 +4471,7 @@ This dataset is ready for upload to Roboflow!"""
             self.rf_dataset_info_var.set(f"❌ Error: {e}")
     
     def upload_to_roboflow(self):
-        """Step 4: Upload dataset to Roboflow with threaded approach"""
+        """Step 4: Upload dataset to Roboflow using workspace.upload_dataset method"""
         try:
             # Validate all steps are complete
             api_key = self.rf_api_key_var.get().strip()
@@ -4155,14 +4486,21 @@ This dataset is ready for upload to Roboflow!"""
                 messagebox.showerror("Error", "Please select a dataset first!")
                 return
             
-            # Find COCO JSON file
-            coco_file = os.path.join(self.current_rf_dataset_path, "annotations.json")
+            # Verify dataset structure
+            dataset_path = self.current_rf_dataset_path
+            coco_file = os.path.join(dataset_path, "annotations.json")
+            images_dir = os.path.join(dataset_path, "images")
+            
             if not os.path.exists(coco_file):
                 messagebox.showerror("Error", f"COCO annotations file not found: {coco_file}")
                 return
+                
+            if not os.path.exists(images_dir):
+                messagebox.showerror("Error", f"Images directory not found: {images_dir}")
+                return
             
             # Check if upload is already in progress
-            if self.upload_in_progress:
+            if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
                 self.log_rf_status("⚠️ Upload already in progress. Please wait...")
                 return
             
@@ -4171,22 +4509,212 @@ This dataset is ready for upload to Roboflow!"""
             self.rf_status_text.delete(1.0, tk.END)
             self.rf_status_text.config(state=tk.DISABLED)
             
-            self.log_rf_status("🚀 Starting threaded Roboflow upload...")
+            self.log_rf_status("🚀 Starting Roboflow workspace upload...")
             self.log_rf_status(f"📁 Dataset: {dataset_name}")
             self.log_rf_status(f"📦 Project: {project_id}")
-            self.log_rf_status(f"📄 COCO file: {coco_file}")
-            self.log_rf_status(f"📋 Upload Mode: Predictions (goes to 'Unassigned')")
+            self.log_rf_status(f"� Dataset Path: {dataset_path}")
+            self.log_rf_status(f"📋 Upload Method: workspace.upload_dataset()")
+            self.log_rf_status(f"⚡ Workers: 12 (high performance)")
             
-            # Start threaded upload
-            self.start_threaded_upload(coco_file, api_key, project_id)
+            # Start workspace upload in thread
+            self.start_workspace_upload(dataset_path, api_key, project_id)
             
         except Exception as e:
             self.log_rf_status(f"❌ Upload error: {e}")
-            self.rf_upload_btn.config(state=tk.NORMAL, text="🚀 Upload as Predictions to Roboflow")
+            messagebox.showerror("Upload Error", f"Upload preparation failed: {e}")
     
-    def start_threaded_upload(self, coco_file, api_key, project_id):
-        """Start the upload process in a separate thread"""
+    def start_workspace_upload(self, dataset_path, api_key, project_id):
+        """Start the workspace upload process in a separate thread"""
         # Disable upload button and start progress
+        self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
+        self.upload_in_progress = True
+        
+        # Start upload thread
+        self.upload_thread = threading.Thread(
+            target=self.workspace_upload_worker,
+            args=(dataset_path, api_key, project_id),
+            daemon=True
+        )
+        self.upload_thread.start()
+        
+        # Start progress monitor
+        self.monitor_workspace_upload_progress()
+
+    def workspace_upload_worker(self, dataset_path, api_key, project_id):
+        """Worker function that runs workspace upload in separate thread"""
+        try:
+            # Call the actual workspace upload function
+            success = self.upload_dataset_using_workspace(dataset_path, api_key, project_id)
+            
+            # Send result back to main thread
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('complete', success))
+            else:
+                # Fallback if upload_queue doesn't exist
+                self.after(0, lambda: self.handle_upload_complete(success))
+            
+        except Exception as e:
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('error', str(e)))
+            else:
+                self.after(0, lambda: self.handle_upload_error(str(e)))
+
+    def monitor_workspace_upload_progress(self):
+        """Monitor workspace upload progress and update UI"""
+        try:
+            # Check for messages from upload thread
+            while hasattr(self, 'upload_queue'):
+                try:
+                    message_type, data = self.upload_queue.get_nowait()
+                    
+                    if message_type == 'complete':
+                        self.handle_upload_complete(data)
+                        return
+                        
+                    elif message_type == 'error':
+                        self.handle_upload_error(data)
+                        return
+                        
+                    elif message_type == 'progress':
+                        self.log_rf_status(data)
+                        
+                except queue.Empty:
+                    break
+                    
+        except Exception as e:
+            self.log_rf_status(f"⚠️ Progress monitor error: {e}")
+        
+        # Continue monitoring if upload is still in progress
+        if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
+            self.after(1000, self.monitor_workspace_upload_progress)
+
+    def handle_upload_complete(self, success):
+        """Handle upload completion"""
+        self.upload_in_progress = False
+        self.rf_upload_btn.config(state='normal', text="🚀 Upload Dataset to Roboflow")
+        
+        if success:
+            self.log_rf_status("🎉 Dataset upload completed successfully!")
+            messagebox.showinfo("Upload Complete", 
+                              "Dataset uploaded successfully to Roboflow!\n\n"
+                              "You can now view and manage your dataset in the Roboflow dashboard.")
+        else:
+            self.log_rf_status("❌ Dataset upload failed or completed with errors")
+            messagebox.showerror("Upload Failed", 
+                                "Dataset upload failed or completed with errors.\n"
+                                "Check the status log for details.")
+
+    def handle_upload_error(self, error_msg):
+        """Handle upload error"""
+        self.upload_in_progress = False
+        self.rf_upload_btn.config(state='normal', text="🚀 Upload Dataset to Roboflow")
+        self.log_rf_status(f"❌ Upload error: {error_msg}")
+        messagebox.showerror("Upload Error", f"Upload failed: {error_msg}")
+
+    def upload_dataset_using_workspace(self, dataset_path, api_key, project_id):
+        """Upload dataset using workspace.upload_dataset method (efficient bulk upload)"""
+        try:
+            # Import required modules
+            try:
+                import roboflow
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', "✅ Roboflow library loaded"))
+                else:
+                    self.after(0, lambda: self.log_rf_status("✅ Roboflow library loaded"))
+            except ImportError:
+                error_msg = "❌ Roboflow library not found. Please install: pip install roboflow"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                else:
+                    self.after(0, lambda: self.log_rf_status(error_msg))
+                return False
+            
+            # Initialize Roboflow
+            progress_msg = "🔄 Initializing Roboflow connection..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', progress_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(progress_msg))
+            
+            rf = roboflow.Roboflow(api_key=api_key)
+            
+            # Get workspace
+            workspace = rf.workspace()
+            workspace_name = getattr(workspace, 'name', 'default')
+            
+            success_msg = f"✅ Connected to workspace: {workspace_name}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', success_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(success_msg))
+            
+            # Prepare upload parameters
+            upload_msg = f"🚀 Starting workspace.upload_dataset()..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', upload_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(upload_msg))
+            
+            params_msg = f"📦 Project ID: {project_id}"
+            params_msg2 = f"📂 Dataset Path: {dataset_path}"
+            params_msg3 = f"⚡ Workers: 12 (high performance)"
+            params_msg4 = f"📋 License: MIT"
+            params_msg5 = f"🎯 Type: object-detection"
+            
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', params_msg))
+                self.upload_queue.put(('progress', params_msg2))
+                self.upload_queue.put(('progress', params_msg3))
+                self.upload_queue.put(('progress', params_msg4))
+                self.upload_queue.put(('progress', params_msg5))
+                self.upload_queue.put(('progress', "-" * 50))
+            else:
+                self.after(0, lambda: self.log_rf_status(params_msg))
+                self.after(0, lambda: self.log_rf_status(params_msg2))
+                self.after(0, lambda: self.log_rf_status(params_msg3))
+                self.after(0, lambda: self.log_rf_status(params_msg4))
+                self.after(0, lambda: self.log_rf_status(params_msg5))
+                self.after(0, lambda: self.log_rf_status("-" * 50))
+            
+            # Upload dataset using workspace method (bulk upload - much faster!)
+            result = workspace.upload_dataset(
+                dataset_path,           # Dataset directory path
+                project_id,             # Project ID (will create or use existing)
+                num_workers=12,         # High performance with 12 workers
+                project_license="MIT",  # License type
+                project_type="object-detection",  # Project type
+                batch_name=None,        # No specific batch name
+                num_retries=0          # No retries for faster upload
+            )
+            
+            # Log completion
+            completion_msg = "🎉 Workspace upload completed!"
+            result_msg = f"📊 Upload result: {result}"
+            final_msg = f"📁 Dataset uploaded to project: {project_id}"
+            dashboard_msg = f"🌐 Check your Roboflow dashboard to view the uploaded data"
+            
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', "-" * 50))
+                self.upload_queue.put(('progress', completion_msg))
+                self.upload_queue.put(('progress', result_msg))
+                self.upload_queue.put(('progress', final_msg))
+                self.upload_queue.put(('progress', dashboard_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status("-" * 50))
+                self.after(0, lambda: self.log_rf_status(completion_msg))
+                self.after(0, lambda: self.log_rf_status(result_msg))
+                self.after(0, lambda: self.log_rf_status(final_msg))
+                self.after(0, lambda: self.log_rf_status(dashboard_msg))
+            
+            return True
+            
+        except Exception as e:
+            error_msg = f"❌ Workspace upload failed: {str(e)}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', error_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(error_msg))
+            return False
         self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
         self.upload_in_progress = True
         

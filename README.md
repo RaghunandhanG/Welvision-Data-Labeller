@@ -21,6 +21,9 @@ A comprehensive Tkinter application for automated image labeling using YOLO v8 m
 - **Database Integration**: Store and manage both models and datasets in MySQL
 - **Status Updates**: Real-time status updates during processing
 - **WelVision Styling**: Professional dark theme interface
+- **🆕 Roboflow Project Creation**: Create new Roboflow projects directly from the app
+- **🆕 Enhanced GPU/CPU Support**: Comprehensive device detection and automatic fallback
+- **🆕 Real-time Device Monitoring**: Live GPU memory usage and device status display
 
 ### Latest Updates
 - ✅ **Simplified Interface**: Removed progress bar for cleaner, streamlined experience
@@ -120,6 +123,57 @@ python yolo_labeler_app.py
 ### 6. Access Results
 - **Images**: `datasets/[dataset_name]/images/`
 - **Labels**: `datasets/[dataset_name]/labels/` (YOLO format)
+
+## 🚀 Roboflow Project Creation
+
+The application now supports creating new Roboflow projects directly from the interface, streamlining your computer vision workflow.
+
+### Setup Roboflow Integration
+1. **Get API Key**: Visit [Roboflow Settings](https://app.roboflow.com/settings/api) to get your API key
+2. **Navigate to Roboflow Tab**: Click on "Roboflow Projects" tab in the application
+3. **Enter API Key**: Paste your API key and click "🔍 Load Projects"
+
+### Create New Project
+Once authenticated, you can create new projects:
+
+1. **Project Name**: Enter a unique descriptive name
+2. **Project Type**: Choose from:
+   - **Object Detection**: Bounding boxes around objects (most common)
+   - **Classification**: Categorize entire images
+   - **Instance Segmentation**: Pixel-perfect object masks
+   - **Semantic Segmentation**: Classify every pixel
+3. **License**: Select appropriate license:
+   - **Private**: Restricted access (recommended for commercial use)
+   - **MIT**: Open source with attribution
+   - **CC BY 4.0**: Creative Commons with attribution
+   - **Public Domain**: No restrictions
+4. **Click "🆕 Create New Project"**
+
+### Benefits
+- **Seamless Workflow**: Create projects without leaving the labelling app
+- **Automatic Selection**: Newly created projects are automatically selected
+- **Immediate Upload**: Start uploading datasets right after creation
+- **Error Handling**: Comprehensive error messages and suggestions
+
+### Project Type Guide
+| Type | Use Case | Annotation Format |
+|------|----------|-------------------|
+| Object Detection | Vehicle/person detection, quality control | Bounding boxes |
+| Classification | Pass/fail, medical diagnosis | Single label per image |
+| Instance Segmentation | Medical imaging, precision agriculture | Pixel masks per object |
+| Semantic Segmentation | Satellite imagery, scene understanding | Pixel-level labels |
+
+For detailed instructions, see [ROBOFLOW_PROJECT_CREATION_GUIDE.md](ROBOFLOW_PROJECT_CREATION_GUIDE.md)
+
+### Testing
+Test the Roboflow integration:
+```bash
+# Windows
+test_roboflow_creation.bat
+
+# Or run Python script directly
+python test_roboflow_creation.py
+```
 
 ## Database Schema
 

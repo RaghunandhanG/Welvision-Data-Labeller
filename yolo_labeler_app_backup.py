@@ -242,6 +242,23 @@ class DatabaseManager:
             return False
         finally:
             self.disconnect()
+    
+    def remove_dataset(self, name):
+        """Remove a dataset from the database"""
+        if not self.connect():
+            return False
+        
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM datasets WHERE name = %s", (name,))
+            self.connection.commit()
+            cursor.close()
+            return True
+        except mysql.connector.Error as e:
+            print(f"Error removing dataset: {e}")
+            return False
+        finally:
+            self.disconnect()
 
 class YOLOLabelerApp(tk.Tk):
     """Main application class for YOLO image labeling with enhanced features"""
@@ -268,9 +285,6 @@ class YOLOLabelerApp(tk.Tk):
         self.temp_annotations = {}  # Store annotations temporarily until dataset creation
         self.is_labeling_session_active = False  # Track if labeling session is active
         self.temp_session_name = ""  # Name for the current temporary session
-        
-        # Initialize status tracking variables
-        self.image_info_var = None  # Will be initialized in create_upload_section
         
         # Threading attributes for Roboflow uploads
         self.upload_queue = queue.Queue()
@@ -1340,7 +1354,7 @@ class YOLOLabelerApp(tk.Tk):
         info_frame = tk.Frame(preview_frame, bg=APP_BG_COLOR)
         info_frame.pack(fill=tk.X, padx=15, pady=10)
         
-        self.preview_info_var = tk.StringVar(value="")
+        self.preview_info_var = tk.StringVar(value="No images loaded")
         info_label = tk.Label(info_frame, textvariable=self.preview_info_var, 
                              font=("Arial", 12, "bold"), fg="#ffc107", bg=APP_BG_COLOR)
         info_label.pack(side=tk.LEFT)
@@ -1378,8 +1392,12 @@ class YOLOLabelerApp(tk.Tk):
                                           font=("Arial", 12, "bold"), fg="white", bg=APP_BG_COLOR)
         main_display_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
         
+        # Create canvas container that won't be affected by button layout changes
+        self.canvas_container = tk.Frame(main_display_frame, bg=APP_BG_COLOR)
+        self.canvas_container.pack(fill=tk.BOTH, expand=True, pady=10)
+        
         # Split view container
-        self.split_container = tk.Frame(main_display_frame, bg=APP_BG_COLOR)
+        self.split_container = tk.Frame(self.canvas_container, bg=APP_BG_COLOR)
         self.split_container.pack(fill=tk.BOTH, expand=True, pady=10)
         
         # Left side - Raw image (responsive size)
@@ -1416,8 +1434,8 @@ class YOLOLabelerApp(tk.Tk):
                                            bg="#1a1a1a", highlightthickness=0)
         self.single_image_canvas.pack(pady=10, expand=True, fill=tk.BOTH)
         
-        # Image info label (hidden initially - no text shown in upload widget)
-        self.main_image_info_var = tk.StringVar(value="")
+        # Image info label
+        self.main_image_info_var = tk.StringVar(value="Upload images and select from thumbnails below")
         main_info_label = tk.Label(main_display_frame, textvariable=self.main_image_info_var,
                                   font=("Arial", 10), fg="#cccccc", bg=APP_BG_COLOR)
         main_info_label.pack(pady=(0, 10))
@@ -1428,23 +1446,27 @@ class YOLOLabelerApp(tk.Tk):
                                   font=("Arial", 9), fg="#ffc107", bg=APP_BG_COLOR)
         detection_label.pack(pady=(0, 5))
         
-        # Labeling controls
+        # Fixed control frame at bottom - won't be affected by layout changes
         control_frame = tk.Frame(main_display_frame, bg=APP_BG_COLOR)
-        control_frame.pack(fill=tk.X, pady=10)
+        control_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
         
-        tk.Button(control_frame, text="🔄 Run Detection", 
+        # Detection controls in top row
+        detection_row = tk.Frame(control_frame, bg=APP_BG_COLOR)
+        detection_row.pack(side=tk.TOP, pady=(0, 5))
+        
+        tk.Button(detection_row, text="🔄 Run Detection", 
                  font=("Arial", 12, "bold"), bg="#007bff", fg="white", width=15,
-                 command=self.run_detection_on_current).pack(side=tk.LEFT, padx=5)
+                 command=self.run_detection_on_current).pack()
         
-        tk.Button(control_frame, text="� Create Dataset", 
-                 font=("Arial", 12, "bold"), bg="#28a745", fg="white", width=15,
-                 command=self.create_dataset_from_labels).pack(side=tk.LEFT, padx=5)
+        # Navigation controls in bottom row
+        nav_row = tk.Frame(control_frame, bg=APP_BG_COLOR)
+        nav_row.pack(side=tk.TOP, pady=5)
         
-        tk.Button(control_frame, text="⬅️ Previous", 
+        tk.Button(nav_row, text="⬅️ Previous", 
                  font=("Arial", 12, "bold"), bg="#6c757d", fg="white", width=10,
                  command=self.show_previous_image).pack(side=tk.LEFT, padx=5)
         
-        tk.Button(control_frame, text="➡️ Next", 
+        tk.Button(nav_row, text="➡️ Next", 
                  font=("Arial", 12, "bold"), bg="#6c757d", fg="white", width=10,
                  command=self.show_next_image).pack(side=tk.LEFT, padx=5)
         
@@ -2077,12 +2099,12 @@ class YOLOLabelerApp(tk.Tk):
                                      command=self.upload_image_folder)
         upload_folder_btn.pack(fill=tk.X, pady=(0, 5))
         
-        # Initialize the image_info_var for status tracking (no visible label)
-        self.image_info_var = tk.StringVar(value="")
-        
-        # Upload info display (hidden but tracks upload count for status)
-        self.upload_info_var = tk.StringVar(value="")
-        # Note: No label widget created here to avoid showing text in upload section
+        # Upload info display
+        self.upload_info_var = tk.StringVar(value="No images uploaded")
+        info_label = tk.Label(options_frame, textvariable=self.upload_info_var, 
+                             font=("Arial", 10), fg="#ffc107", bg=APP_BG_COLOR, 
+                             wraplength=250, justify=tk.LEFT)
+        info_label.pack(fill=tk.X, pady=(5, 0))
     
     def create_action_section(self, parent):
         """Create action buttons section"""
@@ -2139,7 +2161,7 @@ class YOLOLabelerApp(tk.Tk):
         status_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         
         # Status section
-        self.status_var = tk.StringVar(value=f"🏁 Ready - Device: {self.optimal_device.upper()} - Load a model and upload images to begin")
+        self.status_var = tk.StringVar(value=f"Ready - Device: {self.optimal_device.upper()} - Load a model and upload images to begin")
         status_label = tk.Label(status_frame, textvariable=self.status_var, 
                                font=("Arial", 10), fg="#cccccc", bg=APP_BG_COLOR,
                                wraplength=280, justify=tk.LEFT)
@@ -2247,13 +2269,12 @@ class YOLOLabelerApp(tk.Tk):
             for dataset in datasets:
                 if not os.path.exists(dataset['path']):
                     # Dataset folder no longer exists, remove from database
-                    cursor = self.db_connection.cursor()
-                    cursor.execute("DELETE FROM datasets WHERE dataset_name = %s", (dataset['name'],))
-                    deleted_count += 1
-                    print(f"Removed deleted dataset from database: {dataset['name']}")
+                    success = self.db_manager.remove_dataset(dataset['name'])
+                    if success:
+                        deleted_count += 1
+                        print(f"Removed deleted dataset from database: {dataset['name']}")
             
             if deleted_count > 0:
-                self.db_connection.commit()
                 print(f"Cleaned up {deleted_count} deleted dataset(s) from database")
                 
         except Exception as e:
@@ -2332,7 +2353,7 @@ class YOLOLabelerApp(tk.Tk):
         
         try:
             # Load YOLO model initially on CPU for safety
-            self.status_var.set(f"🔄 Loading YOLO model: {selected_model_name}...")
+            self.status_var.set(f"Loading YOLO model...")
             self.update()
             
             self.yolo_model = YOLO(model_path)
@@ -2364,7 +2385,7 @@ class YOLOLabelerApp(tk.Tk):
                     print(f"Model loaded on CPU")
                 
                 self.current_model = model_info
-                self.status_var.set(f"✅ Model loaded successfully on {device_info}: {selected_model_name}")
+                self.status_var.set(f"Model loaded successfully on {device_info}: {selected_model_name}")
                 self.model_status_var.set(f"✅ Loaded: {selected_model_name} ({device_info})")
                 self.load_model_btn.config(state='normal', text="✅ Loaded", bg="#28a745")
                 messagebox.showinfo("Success", f"Model '{selected_model_name}' loaded successfully!\nDevice: {device_info}")
@@ -2404,11 +2425,8 @@ class YOLOLabelerApp(tk.Tk):
         
         if file_paths:
             self.uploaded_images = list(file_paths)
-            # Update internal tracking variables (no visible text)
             self.image_info_var.set(f"Loaded {len(self.uploaded_images)} images")
-            self.upload_info_var.set(f"Uploaded {len(self.uploaded_images)} images")
-            # Update status panel
-            self.status_var.set(f"✅ Uploaded {len(self.uploaded_images)} images - Ready for labeling")
+            self.status_var.set(f"Uploaded {len(self.uploaded_images)} images")
             # Update image previews
             self.update_image_previews()
             
@@ -2428,27 +2446,21 @@ class YOLOLabelerApp(tk.Tk):
             
             if image_files:
                 self.uploaded_images = image_files
-                # Update internal tracking variables (no visible text)
                 self.image_info_var.set(f"Loaded {len(self.uploaded_images)} images from folder")
-                self.upload_info_var.set(f"Uploaded {len(self.uploaded_images)} images from folder")
-                # Update status panel
-                self.status_var.set(f"✅ Uploaded {len(self.uploaded_images)} images from folder: {os.path.basename(folder_path)} - Ready for labeling")
+                self.status_var.set(f"Uploaded {len(self.uploaded_images)} images from folder: {os.path.basename(folder_path)}")
                 # Update image previews
                 self.update_image_previews()
             else:
                 messagebox.showwarning("No Images", "No supported image files found in the selected folder")
-                self.status_var.set("❌ No images found in selected folder")
     
     def start_labeling(self):
         """Start the labeling process - store annotations temporarily"""
         if not self.yolo_model:
             messagebox.showerror("Error", "Please load a YOLO model first")
-            self.status_var.set("❌ Cannot start labeling - No model loaded")
             return
         
         if not self.uploaded_images:
             messagebox.showerror("Error", "Please upload images first")
-            self.status_var.set("❌ Cannot start labeling - No images uploaded")
             return
         
         # Initialize temporary annotation storage for this session
@@ -2458,9 +2470,6 @@ class YOLOLabelerApp(tk.Tk):
         # Get a temporary session name for tracking
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.temp_session_name = f"session_{timestamp}"
-        
-        # Update status
-        self.status_var.set(f"🔄 Starting labeling session for {len(self.uploaded_images)} images...")
         
         # Start labeling process in a separate thread
         threading.Thread(target=self.label_images_temporarily, daemon=True).start()
@@ -3142,11 +3151,7 @@ class YOLOLabelerApp(tk.Tk):
             # Check if we have temporary annotations
             if not self.temp_annotations:
                 messagebox.showwarning("No Annotations", "No temporary annotations found. Please run 'Start Labeling' first.")
-                self.status_var.set("❌ No annotations to save - Run 'Start Labeling' first")
                 return
-            
-            # Update status
-            self.status_var.set("🔄 Preparing to create dataset from temporary annotations...")
             
             # Get dataset information
             dataset_name = ""
@@ -3154,21 +3159,17 @@ class YOLOLabelerApp(tk.Tk):
                 dataset_name = self.dataset_name_var.get().strip()
                 if not dataset_name:
                     messagebox.showerror("Error", "Please enter a dataset name")
-                    self.status_var.set("❌ Dataset creation failed - No name provided")
                     return
             else:
                 selected_dataset = self.existing_dataset_var.get()
                 if not selected_dataset:
                     messagebox.showerror("Error", "Please select an existing dataset")
-                    self.status_var.set("❌ Dataset creation failed - No dataset selected")
                     return
                 # Extract dataset name from "name (count images)" format
                 dataset_name = selected_dataset.split(" (")[0]
             
             # Create dataset directory structure
-            self.status_var.set(f"🔄 Creating dataset structure: {dataset_name}...")
             if not self.create_dataset_structure(dataset_name):
-                self.status_var.set("❌ Dataset creation failed - Could not create directory structure")
                 return
             
             # Create progress dialog
@@ -3315,6 +3316,71 @@ class YOLOLabelerApp(tk.Tk):
             self.after(0, lambda: progress_window.destroy())
             self.after(0, lambda: messagebox.showerror("Error", f"Failed to save dataset: {str(e)}"))
             print(f"Error saving temporary annotations: {e}")
+    
+    def cleanup_deleted_datasets(self):
+        """Remove datasets from database if their folders no longer exist"""
+        try:
+            datasets = self.db_manager.get_datasets()
+            deleted_count = 0
+            
+            for dataset in datasets:
+                if not os.path.exists(dataset['path']):
+                    # Dataset folder no longer exists, remove from database
+                    success = self.db_manager.remove_dataset(dataset['name'])
+                    if success:
+                        deleted_count += 1
+                        print(f"Removed deleted dataset from database: {dataset['name']}")
+            
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} deleted dataset(s) from database")
+                
+        except Exception as e:
+            print(f"Error cleaning up deleted datasets: {e}")
+    
+    def clear_all(self):
+                    "version": "1.0",
+                    "year": 2025,
+                    "contributor": "WelVision YOLO Data Labeller",
+                    "date_created": datetime.now().isoformat()
+                },
+                "licenses": [{
+                    "id": 1,
+                    "name": "Custom License",
+                    "url": ""
+                }],
+                "images": [],
+                "annotations": [],
+                "categories": []
+            }
+            
+            # Get categories from database
+            try:
+                cursor = self.db_connection.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT class_name 
+                    FROM annotations 
+                    WHERE dataset_name = %s
+                """, (self.current_dataset_name,))
+                
+                class_names = [row[0] for row in cursor.fetchall()]
+                
+                # Add categories to COCO
+                for idx, class_name in enumerate(class_names, 1):
+                    coco_data["categories"].append({
+                        "id": idx,
+                        "name": class_name,
+                        "supercategory": "object"
+                    })
+                
+                # Create class name to ID mapping
+                class_to_id = {name: idx for idx, name in enumerate(class_names, 1)}
+                
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Database Error", f"Error reading categories: {str(e)}")
+                return
+            
+            # Process images
             progress_bar['maximum'] = len(image_files)
             annotation_id = 1
             
@@ -3508,18 +3574,11 @@ This dataset is ready for upload to Roboflow!"""
         if hasattr(self, 'current_display_image'):
             self.current_display_image = None
         
-        # Reset info variables (hidden from user)
-        if hasattr(self, 'image_info_var') and self.image_info_var:
-            self.image_info_var.set("")
-        if hasattr(self, 'upload_info_var') and self.upload_info_var:
-            self.upload_info_var.set("")
-        if hasattr(self, 'preview_info_var'):
-            self.preview_info_var.set("")
-        if hasattr(self, 'main_image_info_var'):
-            self.main_image_info_var.set("")
-        
-        # Update status panel - this is the main visible status indicator
-        self.status_var.set(f"🧹 Cleared all images and annotations - Ready for new upload")
+        # Reset info variables
+        self.image_info_var.set("No images loaded")
+        self.preview_info_var.set("No images loaded")
+        self.main_image_info_var.set("Upload images to start labeling")
+        self.status_var.set("Cleared all images and annotations")
         
         # Reset dataset variables
         self.dataset_name_var.set("")
@@ -3530,8 +3589,7 @@ This dataset is ready for upload to Roboflow!"""
             self.existing_dataset_var.set("")
         
         # Clear all image canvases
-        if hasattr(self, 'clear_canvases'):
-            self.clear_canvases()
+        self.clear_canvases()
         
         # Update image previews to reflect cleared state
         self.update_image_previews()

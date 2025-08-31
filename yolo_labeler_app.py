@@ -278,9 +278,9 @@ class YOLOLabelerApp(tk.Tk):
         self.upload_in_progress = False
         
         # Default canvas dimensions (will be updated in create_image_preview_panel)
-        self.split_canvas_width = 400
+        self.split_canvas_width = 600  # Increased from 400 to 600
         self.split_canvas_height = 450
-        self.single_canvas_width = 800
+        self.single_canvas_width = 1000  # Increased from 800 to 1000
         self.single_canvas_height = 500
 
         
@@ -608,7 +608,7 @@ class YOLOLabelerApp(tk.Tk):
         
         # Create the notebook with default styling
         self.notebook = ttk.Notebook(self.scrollable_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=0, pady=15)
         
         # Tab 1: Image Labeling (current functionality)
         self.labeling_frame = tk.Frame(self.notebook, bg=APP_BG_COLOR)
@@ -635,7 +635,7 @@ class YOLOLabelerApp(tk.Tk):
         """Setup the image labeling tab with optimized three-column layout"""
         # Main content container with three columns
         main_content = tk.Frame(self.labeling_frame, bg=APP_BG_COLOR)
-        main_content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_content.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
         # Left panel for controls (30% width - model & dataset)
         self.left_panel = tk.Frame(main_content, bg=APP_BG_COLOR, width=350)
@@ -670,7 +670,7 @@ class YOLOLabelerApp(tk.Tk):
                                        font=("Arial", 16, "bold"), 
                                        fg="white", bg=APP_BG_COLOR, 
                                        relief="raised", bd=3)
-        selection_frame.pack(fill=tk.X, padx=20, pady=20)
+        selection_frame.pack(fill=tk.X, padx=0, pady=20)
         
         # Dataset selection controls
         controls_frame = tk.Frame(selection_frame, bg=APP_BG_COLOR)
@@ -706,7 +706,7 @@ class YOLOLabelerApp(tk.Tk):
                                           font=("Arial", 16, "bold"), 
                                           fg="white", bg=APP_BG_COLOR, 
                                           relief="raised", bd=3)
-        preview_main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        preview_main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=(0, 20))
         
         # Navigation controls at the top
         nav_frame = tk.Frame(preview_main_frame, bg=APP_BG_COLOR)
@@ -901,7 +901,7 @@ class YOLOLabelerApp(tk.Tk):
         """Setup the Roboflow upload tab with step-by-step workflow"""
         # Main container with scrolling
         main_frame = tk.Frame(self.roboflow_frame, bg=APP_BG_COLOR)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=20)
         
         # Title
         title_label = tk.Label(main_frame, text="🚀 Roboflow Project Management & Upload", 
@@ -1701,7 +1701,7 @@ class YOLOLabelerApp(tk.Tk):
             self.main_image_info_var.set("Error loading image")
     
     def show_raw_image_in_canvas(self):
-        """Show the current raw image in the appropriate canvas, with annotations if available"""
+        """Show the current raw image in the appropriate canvas, WITHOUT annotations"""
         if not self.current_main_image:
             return
         
@@ -1716,12 +1716,12 @@ class YOLOLabelerApp(tk.Tk):
                 canvas_width, canvas_height = self.single_canvas_width, self.single_canvas_height
                 canvas = self.single_image_canvas
             
-            # Create image for display (start with original)
+            # Create image for display (start with original - NO ANNOTATIONS)
             display_image = self.current_main_image.copy()
             
-            # Check if we have temporary annotations for this image
-            if self.current_selected_path in self.temp_annotations:
-                display_image = self.draw_temp_annotations_on_image(display_image)
+            # DO NOT draw annotations on raw image - this should always show the clean original
+            # Removed: if self.current_selected_path in self.temp_annotations:
+            #             display_image = self.draw_temp_annotations_on_image(display_image)
             
             # Resize while maintaining aspect ratio
             ratio = min(canvas_width / img_width, canvas_height / img_height)
@@ -2269,11 +2269,11 @@ class YOLOLabelerApp(tk.Tk):
                              command=self.start_labeling)
         start_btn.pack(fill=tk.X, pady=(0, 5))
         
-        export_btn = tk.Button(button_frame, text="📦 Create Dataset", 
+        self.create_dataset_btn = tk.Button(button_frame, text="📦 Create Dataset", 
                               font=("Arial", 11, "bold"), 
                               bg="#28a745", fg="white",
                               command=self.create_dataset_from_labels)
-        export_btn.pack(fill=tk.X, pady=(0, 5))
+        self.create_dataset_btn.pack(fill=tk.X, pady=(0, 5))
         
         clear_btn = tk.Button(button_frame, text="Clear All", 
                              font=("Arial", 11, "bold"), 
@@ -2370,9 +2370,13 @@ class YOLOLabelerApp(tk.Tk):
         if self.dataset_type_var.get() == "new":
             self.existing_dataset_frame.pack_forget()
             self.new_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
+            # Update button text for new dataset
+            self.create_dataset_btn.config(text="📦 Create Dataset")
         else:
             self.new_dataset_frame.pack_forget()
             self.existing_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
+            # Update button text for adding to existing dataset
+            self.create_dataset_btn.config(text="➕ Add to Dataset")
     
     def load_models(self):
         """Load available models from database"""
@@ -2804,10 +2808,10 @@ class YOLOLabelerApp(tk.Tk):
             # Show completion message
             self.after(0, lambda: messagebox.showinfo("Labeling Complete", 
                                                      f"Temporary labeling complete!\n\n"
-                                                     f"✅ Images labeled: {labeled_count} (with 'roller' class)\n"
-                                                     f"❌ Images skipped: {rejected_count} (no 'roller' class)\n"
+                                                     f"✅ Images labeled: {labeled_count} (with detections)\n"
+                                                     f"❌ Images skipped: {rejected_count} (no detections)\n"
                                                      f"📁 Total processed: {total_images}\n\n"
-                                                     f"Annotations are stored temporarily.\n"
+                                                     f"All detected classes are included in annotations.\n"
                                                      f"Click 'Create Dataset' to save them permanently."))
             
             # Update preview to show annotations
@@ -2820,8 +2824,7 @@ class YOLOLabelerApp(tk.Tk):
     def store_temp_annotation(self, image_path, results):
         """Store annotation temporarily in memory"""
         try:
-            # First check if any "roller" class is detected
-            has_roller_class = False
+            # Store all detected classes, not just "roller"
             annotations = []
             
             if results.boxes is not None:
@@ -2829,24 +2832,20 @@ class YOLOLabelerApp(tk.Tk):
                     class_id = int(box.cls[0].cpu().numpy())
                     class_name = self.yolo_model.names[class_id]
                     
-                    # Check if this detection is a "roller" class (case-insensitive)
-                    if class_name.lower() == "roller":
-                        has_roller_class = True
-                        
-                        # Get bounding box coordinates
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        confidence = float(box.conf[0].cpu().numpy())
-                        
-                        # Store annotation info
-                        annotations.append({
-                            'class_name': class_name,
-                            'class_id': class_id,
-                            'bbox': [float(x1), float(y1), float(x2), float(y2)],
-                            'confidence': confidence
-                        })
+                    # Get bounding box coordinates
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    confidence = float(box.conf[0].cpu().numpy())
+                    
+                    # Store annotation info for all classes
+                    annotations.append({
+                        'class_name': class_name,
+                        'class_id': class_id,
+                        'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                        'confidence': confidence
+                    })
             
-            # Only store the image if it contains at least one "roller" class
-            if has_roller_class:
+            # Store the image if it contains any detections
+            if annotations:
                 # Get image dimensions
                 image = cv2.imread(image_path)
                 if image is None:
@@ -2862,10 +2861,11 @@ class YOLOLabelerApp(tk.Tk):
                     'filename': os.path.basename(image_path)
                 }
                 
-                print(f"✅ Temporarily stored annotations for {os.path.basename(image_path)}: {len(annotations)} 'roller' detections")
+                class_names = [ann['class_name'] for ann in annotations]
+                print(f"✅ Temporarily stored annotations for {os.path.basename(image_path)}: {len(annotations)} detections - Classes: {', '.join(set(class_names))}")
                 return True
             else:
-                print(f"Skipping image {os.path.basename(image_path)}: No 'roller' class detected")
+                print(f"Skipping image {os.path.basename(image_path)}: No detections found")
                 return False
                 
         except Exception as e:
@@ -3516,10 +3516,28 @@ class YOLOLabelerApp(tk.Tk):
     def save_temp_annotations_to_dataset(self, progress_window, progress_bar, status_label):
         """Save temporary annotations to permanent dataset"""
         try:
+            # Determine dataset info
+            dataset_name = ""
+            is_existing_dataset = self.dataset_type_var.get() == "existing"
+            
+            if is_existing_dataset:
+                selected_dataset = self.existing_dataset_var.get()
+                dataset_name = selected_dataset.split(" (")[0]
+            else:
+                dataset_name = self.dataset_name_var.get().strip()
+            
+            self.current_dataset_name = dataset_name
+            
+            # Get dataset path
+            if self.dataset_save_location:
+                self.current_dataset_path = os.path.join(self.dataset_save_location, dataset_name)
+            else:
+                self.current_dataset_path = os.path.join(FILE_CONFIG['dataset_base_path'], dataset_name)
+            
             # Initialize COCO structure
             coco_data = {
                 "info": {
-                    "description": f"Dataset created from labeling session - {self.current_dataset_name}",
+                    "description": f"Dataset created from labeling session - {dataset_name}",
                     "version": "1.0",
                     "year": datetime.now().year,
                     "contributor": "WelVision YOLO Data Labeller",
@@ -3528,17 +3546,53 @@ class YOLOLabelerApp(tk.Tk):
                 "licenses": [],
                 "images": [],
                 "annotations": [],
-                "categories": [
-                    {
-                        "id": 1,
-                        "name": "roller",
-                        "supercategory": "object"
-                    }
-                ]
+                "categories": []
             }
             
-            image_id = 1
-            annotation_id = 1
+            # If adding to existing dataset, load existing COCO data
+            existing_image_count = 0
+            existing_annotation_count = 0
+            coco_json_path = os.path.join(self.current_dataset_path, "annotations.json")
+            
+            if is_existing_dataset and os.path.exists(coco_json_path):
+                try:
+                    with open(coco_json_path, 'r') as f:
+                        coco_data = json.load(f)
+                    
+                    # Get existing counts for ID continuation
+                    existing_image_count = len(coco_data.get("images", []))
+                    existing_annotation_count = len(coco_data.get("annotations", []))
+                    
+                    print(f"Loading existing dataset: {existing_image_count} images, {existing_annotation_count} annotations")
+                    
+                except Exception as e:
+                    print(f"Error loading existing COCO data: {e}")
+                    # Continue with empty structure if loading fails
+            
+            # Ensure categories exist for all classes found in temp annotations
+            existing_categories = {cat['name']: cat['id'] for cat in coco_data.get("categories", [])}
+            
+            # Find all unique classes in temp annotations
+            all_classes = set()
+            for temp_data in self.temp_annotations.values():
+                for annotation in temp_data['annotations']:
+                    all_classes.add(annotation['class_name'])
+            
+            # Add any missing categories
+            next_category_id = max([cat['id'] for cat in coco_data.get("categories", [])], default=0) + 1
+            for class_name in all_classes:
+                if class_name not in existing_categories:
+                    coco_data["categories"].append({
+                        "id": next_category_id,
+                        "name": class_name,
+                        "supercategory": "object"
+                    })
+                    existing_categories[class_name] = next_category_id
+                    next_category_id += 1
+            
+            # Start IDs after existing ones
+            image_id = existing_image_count + 1
+            annotation_id = existing_annotation_count + 1
             saved_count = 0
             
             # Process each temporarily annotated image
@@ -3579,10 +3633,13 @@ class YOLOLabelerApp(tk.Tk):
                         height = y2 - y1
                         area = width * height
                         
+                        # Get correct category ID for this class
+                        category_id = existing_categories[annotation['class_name']]
+                        
                         coco_data["annotations"].append({
                             "id": annotation_id,
                             "image_id": image_id,
-                            "category_id": 1,  # roller class
+                            "category_id": category_id,
                             "bbox": [x1, y1, width, height],
                             "area": area,
                             "iscrowd": 0,
@@ -3603,18 +3660,28 @@ class YOLOLabelerApp(tk.Tk):
                 json.dump(coco_data, f, indent=2)
             
             # Update dataset image count in database
-            self.db_manager.update_dataset_image_count(self.current_dataset_name, saved_count)
+            total_images = existing_image_count + saved_count
+            self.db_manager.update_dataset_image_count(self.current_dataset_name, total_images)
             
             # Clear temporary annotations
             self.temp_annotations = {}
             self.is_labeling_session_active = False
             
+            # Prepare success message
+            is_existing = self.dataset_type_var.get() == "existing"
+            if is_existing:
+                action_text = "Images added to existing dataset successfully!"
+                detail_text = f"✅ New images added: {saved_count}\n📊 Total images in dataset: {total_images}"
+            else:
+                action_text = "Dataset created successfully!"
+                detail_text = f"✅ Images saved: {saved_count}"
+            
             # Update status and close progress
             self.after(0, lambda: progress_window.destroy())
-            self.after(0, lambda: messagebox.showinfo("Dataset Created", 
-                                                     f"Dataset created successfully!\n\n"
+            self.after(0, lambda: messagebox.showinfo("Dataset Operation Complete", 
+                                                     f"{action_text}\n\n"
                                                      f"Dataset: {self.current_dataset_name}\n"
-                                                     f"✅ Images saved: {saved_count}\n"
+                                                     f"{detail_text}\n"
                                                      f"📁 Location: {self.current_dataset_path}\n\n"
                                                      f"Temporary annotations have been cleared."))
             

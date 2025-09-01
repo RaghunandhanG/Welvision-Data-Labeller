@@ -31,7 +31,7 @@ FILE_CONFIG = {
         ('TIFF files', '*.tiff *.tif'),
         ('All files', '*.*')
     ],
-    'dataset_base_path': 'datasets',
+    'dataset_base_path': r'c:\Users\raghu\OneDrive\Desktop\WELVISION DATA LABELLER\datasets',
     'max_preview_size': (800, 600)
 }
 

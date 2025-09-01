@@ -242,6 +242,46 @@ class DatabaseManager:
             return False
         finally:
             self.disconnect()
+    
+    def remove_dataset(self, dataset_id):
+        """Remove a dataset from database"""
+        if not self.connect():
+            return False
+        
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "UPDATE datasets SET is_active = FALSE WHERE id = %s",
+                (dataset_id,)
+            )
+            self.connection.commit()
+            cursor.close()
+            return True
+        except mysql.connector.Error as e:
+            print(f"Error removing dataset: {e}")
+            return False
+        finally:
+            self.disconnect()
+    
+    def remove_dataset_by_name(self, dataset_name):
+        """Remove a dataset from database by name"""
+        if not self.connect():
+            return False
+        
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "UPDATE datasets SET is_active = FALSE WHERE name = %s",
+                (dataset_name,)
+            )
+            self.connection.commit()
+            cursor.close()
+            return True
+        except mysql.connector.Error as e:
+            print(f"Error removing dataset by name: {e}")
+            return False
+        finally:
+            self.disconnect()
 
 class YOLOLabelerApp(tk.Tk):
     """Main application class for YOLO image labeling with enhanced features"""
@@ -268,6 +308,14 @@ class YOLOLabelerApp(tk.Tk):
         self.temp_annotations = {}  # Store annotations temporarily until dataset creation
         self.is_labeling_session_active = False  # Track if labeling session is active
         self.temp_session_name = ""  # Name for the current temporary session
+        self.stop_labeling_flag = False  # Flag to stop ongoing labeling process
+        
+        # Button references for state management
+        self.start_btn = None
+        self.stop_btn = None
+        
+        # Dataset naming variables
+        self.current_suggestion = None
         
         # Initialize status tracking variables
         self.image_info_var = None  # Will be initialized in create_upload_section
@@ -642,14 +690,14 @@ class YOLOLabelerApp(tk.Tk):
         self.left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         self.left_panel.pack_propagate(False)  # Maintain fixed width
         
-        # Middle panel for controls (25% width - upload & actions)
-        self.middle_panel = tk.Frame(main_content, bg=APP_BG_COLOR, width=300)
+        # Middle panel for controls (increased width - upload & actions)
+        self.middle_panel = tk.Frame(main_content, bg=APP_BG_COLOR, width=400)
         self.middle_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5)
         self.middle_panel.pack_propagate(False)  # Maintain fixed width
         
-        # Right panel for image preview (45% width - increased for better image display)
+        # Right panel for image preview (moved more to the right)
         self.right_panel = tk.Frame(main_content, bg=APP_BG_COLOR)
-        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(15, 0))
         
         # Create sections in left panel (Model & Dataset)
         self.create_model_section(self.left_panel)
@@ -807,6 +855,7 @@ class YOLOLabelerApp(tk.Tk):
             self.cleanup_deleted_datasets()
             
             self.refresh_preview_datasets()
+            self.refresh_existing_datasets()
             self.refresh_rf_datasets()
             print("All dataset dropdowns refreshed and cleaned up successfully")
         except Exception as e:
@@ -884,6 +933,49 @@ class YOLOLabelerApp(tk.Tk):
             traceback.print_exc()
             if hasattr(self, 'dataset_info_var'):
                 self.dataset_info_var.set("Error loading datasets")
+    
+    def refresh_existing_datasets(self):
+        """Refresh the existing datasets dropdown for dataset management"""
+        try:
+            # Check if the dataset dropdown exists yet
+            if not hasattr(self, 'dataset_dropdown'):
+                print("Dataset dropdown not created yet, skipping refresh")
+                return
+            
+            # First, scan for datasets that exist on filesystem but not in database
+            self.scan_and_add_missing_datasets()
+                
+            datasets = self.db_manager.get_datasets()
+            print(f"🔍 Refreshing existing datasets - found {len(datasets)} in database")
+            
+            # Filter datasets to only include those with existing paths
+            valid_datasets = []
+            for dataset in datasets:
+                print(f"   Checking dataset: {dataset['name']} -> {dataset['path']}")
+                if self.verify_dataset_exists(dataset['path']):
+                    print(f"     ✅ Valid dataset found")
+                    valid_datasets.append(dataset)
+                else:
+                    print(f"     ❌ Dataset path does not exist or is invalid")
+            
+            dataset_names = [f"{dataset['name']} ({dataset['image_count']} images)" for dataset in valid_datasets]
+            
+            print(f"Found {len(valid_datasets)} valid existing datasets")
+            
+            self.dataset_dropdown['values'] = dataset_names
+            
+            if dataset_names:
+                # Keep current selection if it's still valid, otherwise set to first
+                current_selection = self.existing_dataset_var.get()
+                if current_selection not in dataset_names:
+                    self.dataset_dropdown.set(dataset_names[0])
+            else:
+                self.existing_dataset_var.set("")
+                
+        except Exception as e:
+            print(f"Error refreshing existing datasets: {e}")
+            if hasattr(self, 'dataset_dropdown'):
+                self.dataset_dropdown['values'] = []
     
     def log_rf_status(self, message):
         """Log status message to Roboflow log area"""
@@ -1076,7 +1168,7 @@ class YOLOLabelerApp(tk.Tk):
         self.rf_upload_btn.pack()
         
         # Upload info
-        upload_info = tk.Label(step4_frame, text="Images will be uploaded as predictions to 'Unassigned' section", 
+        upload_info = tk.Label(step4_frame, text="Dataset will be uploaded using workspace.upload_dataset() - bulk upload with annotations", 
                               font=("Arial", 9), fg="#ffcc00", bg=APP_BG_COLOR)
         upload_info.pack(pady=(0, 10))
         
@@ -2150,17 +2242,17 @@ class YOLOLabelerApp(tk.Tk):
         
         # Dataset type selection - stacked for better visibility
         self.dataset_type_var = tk.StringVar(value="new")
-        new_dataset_rb = tk.Radiobutton(options_frame, text="Create New Dataset", 
+        self.new_dataset_rb = tk.Radiobutton(options_frame, text="Create New Dataset", 
                                        variable=self.dataset_type_var, value="new",
                                        font=("Arial", 11, "bold"), fg="white", bg=APP_BG_COLOR,
                                        selectcolor=APP_BG_COLOR, command=self.on_dataset_type_changed)
-        new_dataset_rb.pack(anchor=tk.W, pady=(0, 5))
+        self.new_dataset_rb.pack(anchor=tk.W, pady=(0, 5))
         
-        existing_dataset_rb = tk.Radiobutton(options_frame, text="Add to Existing Dataset", 
+        self.existing_dataset_rb = tk.Radiobutton(options_frame, text="Add to Existing Dataset", 
                                             variable=self.dataset_type_var, value="existing",
                                             font=("Arial", 11, "bold"), fg="white", bg=APP_BG_COLOR,
                                             selectcolor=APP_BG_COLOR, command=self.on_dataset_type_changed)
-        existing_dataset_rb.pack(anchor=tk.W)
+        self.existing_dataset_rb.pack(anchor=tk.W)
         
         # New dataset row
         self.new_dataset_frame = tk.Frame(dataset_frame, bg=APP_BG_COLOR)
@@ -2171,10 +2263,28 @@ class YOLOLabelerApp(tk.Tk):
                  font=("Arial", 11, "bold"), 
                  fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W, pady=(0, 5))
         
+        # Name entry with validation indicator
+        name_entry_frame = tk.Frame(self.new_dataset_frame, bg=APP_BG_COLOR)
+        name_entry_frame.pack(fill=tk.X, pady=(0, 10))
+        
         self.dataset_name_var = tk.StringVar()
-        self.dataset_entry = tk.Entry(self.new_dataset_frame, textvariable=self.dataset_name_var, 
-                                     font=("Arial", 10), width=35)
-        self.dataset_entry.pack(fill=tk.X, pady=(0, 10))
+        self.dataset_entry = tk.Entry(name_entry_frame, textvariable=self.dataset_name_var, 
+                                     font=("Arial", 10), width=30)
+        self.dataset_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Validation indicator
+        self.dataset_name_indicator = tk.Label(name_entry_frame, text="", 
+                                             font=("Arial", 9), bg=APP_BG_COLOR, width=20)
+        self.dataset_name_indicator.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        # Auto-suggestion button (initially hidden)
+        self.suggestion_button = tk.Button(name_entry_frame, text="", 
+                                         font=("Arial", 8), bg="#4CAF50", fg="white",
+                                         command=self.apply_suggestion)
+        self.suggestion_button.pack_forget()  # Hide initially
+        
+        # Bind validation to dataset name entry
+        self.dataset_name_var.trace('w', self.validate_dataset_name)
         
         # Dataset location row - vertical layout
         tk.Label(self.new_dataset_frame, text="Save Location:", 
@@ -2184,11 +2294,11 @@ class YOLOLabelerApp(tk.Tk):
         location_controls = tk.Frame(self.new_dataset_frame, bg=APP_BG_COLOR)
         location_controls.pack(fill=tk.X, pady=(0, 5))
         
-        browse_location_btn = tk.Button(location_controls, text="Browse", 
+        self.browse_location_btn = tk.Button(location_controls, text="Browse", 
                                        font=("Arial", 10, "bold"), 
                                        bg="#17a2b8", fg="white", width=8,
                                        command=self.browse_dataset_location)
-        browse_location_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.browse_location_btn.pack(side=tk.LEFT, padx=(0, 5))
         
         self.location_var = tk.StringVar(value="datasets (default)")
         location_entry = tk.Entry(location_controls, textvariable=self.location_var, 
@@ -2263,11 +2373,18 @@ class YOLOLabelerApp(tk.Tk):
         button_frame.pack(fill=tk.X, padx=15, pady=10)
         
         # Arrange buttons in a 2x3 grid for better fit
-        start_btn = tk.Button(button_frame, text="Start Labeling", 
+        self.start_btn = tk.Button(button_frame, text="Start Labeling", 
                              font=("Arial", 11, "bold"), 
                              bg="#ffc107", fg="black",
                              command=self.start_labeling)
-        start_btn.pack(fill=tk.X, pady=(0, 5))
+        self.start_btn.pack(fill=tk.X, pady=(0, 5))
+        
+        self.stop_btn = tk.Button(button_frame, text="⏹ Stop Labeling", 
+                             font=("Arial", 11, "bold"), 
+                             bg="#dc3545", fg="white",
+                             command=self.stop_labeling,
+                             state=tk.DISABLED)
+        self.stop_btn.pack(fill=tk.X, pady=(0, 5))
         
         self.create_dataset_btn = tk.Button(button_frame, text="📦 Create Dataset", 
                               font=("Arial", 11, "bold"), 
@@ -2377,6 +2494,8 @@ class YOLOLabelerApp(tk.Tk):
             self.existing_dataset_frame.pack(fill=tk.X, padx=15, pady=10)
             # Update button text for adding to existing dataset
             self.create_dataset_btn.config(text="➕ Add to Dataset")
+            # Refresh the existing datasets list when switching to this option
+            self.refresh_existing_datasets()
     
     def load_models(self):
         """Load available models from database"""
@@ -2460,19 +2579,16 @@ class YOLOLabelerApp(tk.Tk):
         try:
             datasets = self.db_manager.get_datasets()
             deleted_count = 0
-            
             for dataset in datasets:
                 if not os.path.exists(dataset['path']):
                     # Dataset folder no longer exists, remove from database
-                    cursor = self.db_connection.cursor()
+                    cursor = self.db_manager.connection.cursor()
                     cursor.execute("DELETE FROM datasets WHERE dataset_name = %s", (dataset['name'],))
                     deleted_count += 1
                     print(f"Removed deleted dataset from database: {dataset['name']}")
-            
             if deleted_count > 0:
-                self.db_connection.commit()
+                self.db_manager.connection.commit()
                 print(f"Cleaned up {deleted_count} deleted dataset(s) from database")
-                
         except Exception as e:
             print(f"Error cleaning up deleted datasets: {e}")
     
@@ -2726,6 +2842,8 @@ class YOLOLabelerApp(tk.Tk):
             self.status_var.set(f"✅ Uploaded {len(self.uploaded_images)} images - Ready for labeling")
             # Update image previews
             self.update_image_previews()
+            # Update button states
+            self.update_start_button_state()
             
     def upload_image_folder(self):
         """Upload entire folder of images"""
@@ -2750,10 +2868,66 @@ class YOLOLabelerApp(tk.Tk):
                 self.status_var.set(f"✅ Uploaded {len(self.uploaded_images)} images from folder: {os.path.basename(folder_path)} - Ready for labeling")
                 # Update image previews
                 self.update_image_previews()
+                # Update button states
+                self.update_start_button_state()
             else:
                 messagebox.showwarning("No Images", "No supported image files found in the selected folder")
                 self.status_var.set("❌ No images found in selected folder")
     
+    def update_dataset_controls_state(self):
+        """Update dataset controls based on labeling session state"""
+        print(f"🔧 DEBUG: update_dataset_controls_state called, is_labeling_session_active = {self.is_labeling_session_active}")
+        
+        if self.is_labeling_session_active:
+            print("🔧 DEBUG: Disabling dataset controls (labeling session active)")
+            # Disable dataset creation controls during labeling
+            self.new_dataset_rb.config(state=tk.DISABLED)
+            self.existing_dataset_rb.config(state=tk.DISABLED)
+            self.create_dataset_btn.config(state=tk.DISABLED)
+            
+            # Also disable the radio buttons we added for Add to Dataset vs Create New Dataset
+            if hasattr(self, 'add_to_dataset_radio'):
+                self.add_to_dataset_radio.config(state=tk.DISABLED)
+            if hasattr(self, 'create_new_dataset_radio'):
+                self.create_new_dataset_radio.config(state=tk.DISABLED)
+            
+            # Also disable related dataset entry fields
+            if hasattr(self, 'dataset_name_entry'):
+                self.dataset_name_entry.config(state=tk.DISABLED)
+            if hasattr(self, 'dataset_entry'):
+                self.dataset_entry.config(state=tk.DISABLED)
+            if hasattr(self, 'dataset_dropdown'):
+                self.dataset_dropdown.config(state=tk.DISABLED)
+            if hasattr(self, 'browse_folder_btn'):
+                self.browse_folder_btn.config(state=tk.DISABLED)
+            if hasattr(self, 'browse_location_btn'):
+                self.browse_location_btn.config(state=tk.DISABLED)
+                
+        else:
+            print("🔧 DEBUG: Enabling dataset controls (labeling session not active)")
+            # Enable dataset creation controls when not labeling
+            self.new_dataset_rb.config(state=tk.NORMAL)
+            self.existing_dataset_rb.config(state=tk.NORMAL)
+            self.create_dataset_btn.config(state=tk.NORMAL)
+            
+            # Re-enable the radio buttons we added for Add to Dataset vs Create New Dataset
+            if hasattr(self, 'add_to_dataset_radio'):
+                self.add_to_dataset_radio.config(state=tk.NORMAL)
+            if hasattr(self, 'create_new_dataset_radio'):
+                self.create_new_dataset_radio.config(state=tk.NORMAL)
+            
+            # Re-enable related dataset entry fields
+            if hasattr(self, 'dataset_name_entry'):
+                self.dataset_name_entry.config(state=tk.NORMAL)
+            if hasattr(self, 'dataset_entry'):
+                self.dataset_entry.config(state=tk.NORMAL)
+            if hasattr(self, 'dataset_dropdown'):
+                self.dataset_dropdown.config(state="readonly")
+            if hasattr(self, 'browse_folder_btn'):
+                self.browse_folder_btn.config(state=tk.NORMAL)
+            if hasattr(self, 'browse_location_btn'):
+                self.browse_location_btn.config(state=tk.NORMAL)
+
     def start_labeling(self):
         """Start the labeling process - store annotations temporarily"""
         if not self.yolo_model:
@@ -2766,27 +2940,467 @@ class YOLOLabelerApp(tk.Tk):
             self.status_var.set("❌ Cannot start labeling - No images uploaded")
             return
         
+        # Check if there are any unannotated images
+        unannotated_images = [img for img in self.uploaded_images if img not in self.temp_annotations]
+        if not unannotated_images:
+            messagebox.showinfo("All Annotated", "All uploaded images are already annotated!")
+            self.status_var.set("✅ All images already annotated")
+            return
+        
         # Initialize temporary annotation storage for this session
-        self.temp_annotations = {}
+        if not hasattr(self, 'temp_annotations') or self.temp_annotations is None:
+            self.temp_annotations = {}
         self.is_labeling_session_active = True
+        print("🔧 DEBUG: Start labeling called - set is_labeling_session_active = True")
+        self.update_dataset_controls_state()  # Disable dataset controls during labeling
+        self.stop_labeling_flag = False
+        
+        # Update button states - disable start, enable stop
+        if self.start_btn:
+            self.start_btn.config(state=tk.DISABLED)
+        if self.stop_btn:
+            self.stop_btn.config(state=tk.NORMAL)
         
         # Get a temporary session name for tracking
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.temp_session_name = f"session_{timestamp}"
         
         # Update status
-        self.status_var.set(f"🔄 Starting labeling session for {len(self.uploaded_images)} images...")
+        self.status_var.set(f"🔄 Starting labeling session for {len(unannotated_images)} unannotated images...")
         
         # Start labeling process in a separate thread
         threading.Thread(target=self.label_images_temporarily, daemon=True).start()
     
+    def stop_labeling(self):
+        """Stop the ongoing labeling process"""
+        self.stop_labeling_flag = True
+        self.is_labeling_session_active = False  # Reset labeling session state
+        print("🔧 DEBUG: Stop labeling called - set is_labeling_session_active = False")
+        self.update_dataset_controls_state()  # Re-enable dataset controls
+        self.status_var.set("🛑 Stopping labeling process...")
+        
+        # Update button states - enable start, disable stop
+        if self.start_btn:
+            self.start_btn.config(state=tk.NORMAL)
+        if self.stop_btn:
+            self.stop_btn.config(state=tk.DISABLED)
+    
+    def update_start_button_state(self):
+        """Update the start button state based on whether there are unannotated images"""
+        if not self.start_btn:
+            return
+            
+        # Check if there are any unannotated images
+        if self.uploaded_images and hasattr(self, 'temp_annotations'):
+            unannotated_images = [img for img in self.uploaded_images if img not in self.temp_annotations]
+            if unannotated_images and not self.is_labeling_session_active:
+                self.start_btn.config(state=tk.NORMAL)
+            else:
+                self.start_btn.config(state=tk.DISABLED)
+        elif self.uploaded_images:
+            # No annotations yet, enable button
+            self.start_btn.config(state=tk.NORMAL)
+        else:
+            # No images uploaded
+            self.start_btn.config(state=tk.DISABLED)
+    
+    def validate_dataset_name(self, *args):
+        """Validate dataset name in real-time and provide feedback"""
+        try:
+            # Safety checks for UI elements
+            if not hasattr(self, 'dataset_entry') or not hasattr(self, 'dataset_name_indicator'):
+                return
+                
+            if not self.dataset_entry.winfo_exists() or not self.dataset_name_indicator.winfo_exists():
+                return
+            
+            dataset_name = self.dataset_name_var.get().strip()
+            
+            if not dataset_name:
+                self.dataset_entry.config(bg="white")
+                self.dataset_name_indicator.config(text="", fg="white")
+                self.hide_suggestion_button()
+                return
+            
+            # Check if dataset already exists with detailed validation
+            exists_result = self.detailed_dataset_exists_check(dataset_name)
+            
+            if exists_result['exists']:
+                self.dataset_entry.config(bg="#ffcccc")  # Light red background
+                self.dataset_name_indicator.config(text="❌ Already exists", fg="#ff6b6b")
+                self.show_suggestion_button(dataset_name)
+            elif exists_result['in_db_but_missing']:
+                self.dataset_entry.config(bg="#fff3cd")  # Light yellow background
+                self.dataset_name_indicator.config(text="⚠️ Will cleanup old entry", fg="#856404")
+                self.hide_suggestion_button()
+            else:
+                self.dataset_entry.config(bg="#ccffcc")  # Light green background
+                self.dataset_name_indicator.config(text="✅ Available", fg="#4CAF50")
+                self.hide_suggestion_button()
+                
+        except Exception:
+            # Reset to safe state on error
+            if hasattr(self, 'dataset_entry'):
+                try:
+                    self.dataset_entry.config(bg="white")
+                except:
+                    pass
+            if hasattr(self, 'dataset_name_indicator'):
+                try:
+                    self.dataset_name_indicator.config(text="", fg="white")
+                except:
+                    pass
+    
+    def detailed_dataset_exists_check(self, dataset_name):
+        """Perform detailed check of dataset existence"""
+        try:
+            if not dataset_name or not dataset_name.strip():
+                return {'exists': False, 'in_db_but_missing': False}
+                
+            datasets = self.db_manager.get_datasets()
+            clean_name = dataset_name.strip().lower()
+            
+            for dataset in datasets:
+                db_name = dataset['name'].strip().lower()
+                if db_name == clean_name:
+                    # Found matching name in database, check if dataset actually exists
+                    dataset_path = dataset['path']
+                    if self.verify_dataset_exists(dataset_path):
+                        # Dataset exists both in DB and filesystem - name is taken
+                        return {'exists': True, 'in_db_but_missing': False}
+                    else:
+                        # Dataset in DB but missing from filesystem - can be reused
+                        return {'exists': False, 'in_db_but_missing': True}
+            
+            # No matching name found in database
+            return {'exists': False, 'in_db_but_missing': False}
+        except Exception:
+            return {'exists': False, 'in_db_but_missing': False}
+    
+    def show_suggestion_button(self, base_name):
+        """Show suggestion button with auto-generated unique name"""
+        try:
+            if hasattr(self, 'suggestion_button'):
+                suggested_name = self.generate_unique_dataset_name(base_name)
+                self.suggestion_button.config(text=f"Use: {suggested_name}")
+                self.current_suggestion = suggested_name
+                self.suggestion_button.pack(side=tk.RIGHT, padx=(5, 0))
+        except Exception:
+            pass
+    
+    def hide_suggestion_button(self):
+        """Hide the suggestion button"""
+        try:
+            if hasattr(self, 'suggestion_button'):
+                self.suggestion_button.pack_forget()
+                self.current_suggestion = None
+        except Exception:
+            pass
+    
+    def apply_suggestion(self):
+        """Apply the suggested unique name"""
+        if hasattr(self, 'current_suggestion') and self.current_suggestion:
+            self.dataset_name_var.set(self.current_suggestion)
+    
+    def is_dataset_name_exists(self, dataset_name):
+        """Check if a dataset with the given name already exists and is valid"""
+        try:
+            if not dataset_name or not dataset_name.strip():
+                return False
+                
+            datasets = self.db_manager.get_datasets()
+            clean_name = dataset_name.strip().lower()
+            
+            for dataset in datasets:
+                db_name = dataset['name'].strip().lower()
+                if db_name == clean_name:
+                    # Found matching name in database, now check if dataset actually exists
+                    dataset_path = dataset['path']
+                    if self.verify_dataset_exists(dataset_path):
+                        # Dataset exists both in DB and filesystem - name is taken
+                        return True
+                    else:
+                        # Dataset in DB but missing from filesystem - name can be reused
+                        print(f"🔍 Dataset '{dataset['name']}' found in DB but missing at path: {dataset_path}")
+                        return False
+            
+            # No matching name found in database
+            return False
+        except Exception as e:
+            print(f"❌ ERROR in is_dataset_name_exists: {e}")
+            return False
+    
+    def verify_dataset_exists(self, dataset_path):
+        """Verify if a dataset actually exists at the given path"""
+        try:
+            if not dataset_path or not os.path.exists(dataset_path):
+                return False
+            
+            # Check if it's a valid dataset directory structure
+            images_dir = os.path.join(dataset_path, "images")
+            annotations_file = os.path.join(dataset_path, "annotations.json")
+            
+            # A dataset exists if it has either:
+            # 1. An images directory with files, OR
+            # 2. An annotations.json file
+            has_images = os.path.exists(images_dir) and len(os.listdir(images_dir)) > 0
+            has_annotations = os.path.exists(annotations_file) and os.path.getsize(annotations_file) > 0
+            
+            return has_images or has_annotations
+            
+        except Exception as e:
+            print(f"❌ ERROR verifying dataset at {dataset_path}: {e}")
+            return False
+    
+    def scan_and_add_missing_datasets(self):
+        """Scan datasets folder and add any COCO datasets not in database"""
+        try:
+            datasets_folder = os.path.join(os.getcwd(), "datasets")
+            if not os.path.exists(datasets_folder):
+                return
+            
+            print(f"🔍 Scanning for missing datasets in {datasets_folder}")
+            
+            # Get existing datasets from database (including inactive ones)
+            if not hasattr(self, 'db_manager') or not self.db_manager:
+                print("❌ Database manager not available")
+                return
+                
+            if not self.db_manager.connect():
+                print("❌ Cannot connect to database")
+                return
+            
+            try:
+                cursor = self.db_manager.connection.cursor(dictionary=True)
+                cursor.execute("SELECT name, path, is_active FROM datasets")
+                all_datasets = cursor.fetchall()
+                cursor.close()
+                
+                existing_names = {dataset['name'] for dataset in all_datasets}
+                existing_paths = {os.path.normpath(dataset['path']) for dataset in all_datasets}
+                
+                # Scan datasets folder
+                for item in os.listdir(datasets_folder):
+                    dataset_path = os.path.join(datasets_folder, item)
+                    
+                    if os.path.isdir(dataset_path):
+                        # Check if this is a valid COCO dataset
+                        if self.verify_dataset_exists(dataset_path):
+                            dataset_name = item
+                            normalized_path = os.path.normpath(dataset_path)
+                            
+                            # Count images
+                            images_dir = os.path.join(dataset_path, "images")
+                            image_count = 0
+                            if os.path.exists(images_dir):
+                                image_count = len([f for f in os.listdir(images_dir) 
+                                                 if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+                            
+                            if dataset_name in existing_names:
+                                # Check if it needs to be reactivated or path updated
+                                existing_dataset = next((d for d in all_datasets if d['name'] == dataset_name), None)
+                                if existing_dataset:
+                                    if not existing_dataset['is_active']:
+                                        print(f"   🔄 Reactivating dataset: {dataset_name}")
+                                        cursor = self.db_manager.connection.cursor()
+                                        cursor.execute("UPDATE datasets SET is_active = TRUE, path = %s, image_count = %s WHERE name = %s", 
+                                                     (dataset_path, image_count, dataset_name))
+                                        self.db_manager.connection.commit()
+                                        cursor.close()
+                                    else:
+                                        print(f"   ✅ Dataset {dataset_name} already active in database")
+                            elif normalized_path not in existing_paths:
+                                # Add new dataset
+                                print(f"   ➕ Adding missing dataset: {dataset_name} ({image_count} images)")
+                                self.db_manager.add_dataset(dataset_name, dataset_path, image_count)
+                            else:
+                                print(f"   ✅ Dataset path {normalized_path} already in database")
+            
+            finally:
+                self.db_manager.disconnect()
+            
+        except Exception as e:
+            print(f"❌ ERROR scanning for missing datasets: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def cleanup_invalid_dataset_entries(self, dataset_name):
+        """Remove database entries for datasets that no longer exist"""
+        try:
+            datasets = self.db_manager.get_datasets()
+            clean_name = dataset_name.strip().lower()
+            
+            for dataset in datasets:
+                db_name = dataset['name'].strip().lower()
+                if db_name == clean_name:
+                    dataset_path = dataset['path']
+                    if not self.verify_dataset_exists(dataset_path):
+                        # Dataset is in DB but doesn't exist - remove from DB
+                        print(f"🧹 Cleaning up invalid DB entry: '{dataset['name']}' at {dataset_path}")
+                        self.db_manager.remove_dataset(dataset['id'])
+                        print(f"✅ Removed invalid dataset entry from database")
+                        return True
+            return False
+        except Exception as e:
+            print(f"❌ ERROR cleaning up invalid entries: {e}")
+            return False
+    
+    def generate_unique_dataset_name(self, base_name):
+        """Generate a unique dataset name by appending a number if necessary"""
+        exists_result = self.detailed_dataset_exists_check(base_name)
+        if not exists_result['exists']:
+            return base_name
+        
+        counter = 1
+        while True:
+            new_name = f"{base_name}_{counter}"
+            exists_result = self.detailed_dataset_exists_check(new_name)
+            if not exists_result['exists']:
+                return new_name
+            counter += 1
+    
+    def prompt_for_unique_name(self, existing_name):
+        """Prompt user to provide a unique name for the dataset"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Dataset Name Conflict")
+        dialog.geometry("500x300")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Configure dialog background
+        dialog.configure(bg=APP_BG_COLOR)
+        
+        result = {'name': None, 'action': 'cancel'}
+        
+        # Header
+        header_frame = tk.Frame(dialog, bg=APP_BG_COLOR)
+        header_frame.pack(fill=tk.X, padx=20, pady=20)
+        
+        tk.Label(header_frame, text="⚠️ Dataset Name Already Exists", 
+                font=("Arial", 14, "bold"), fg="#ff6b6b", bg=APP_BG_COLOR).pack()
+        
+        tk.Label(header_frame, text=f"A dataset named '{existing_name}' already exists.", 
+                font=("Arial", 11), fg="white", bg=APP_BG_COLOR).pack(pady=(10, 0))
+        
+        # Options frame
+        options_frame = tk.Frame(dialog, bg=APP_BG_COLOR)
+        options_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Option 1: Rename
+        rename_frame = tk.LabelFrame(options_frame, text="Option 1: Use a Different Name", 
+                                   font=("Arial", 11, "bold"), fg="white", bg=APP_BG_COLOR)
+        rename_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        name_frame = tk.Frame(rename_frame, bg=APP_BG_COLOR)
+        name_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(name_frame, text="New Dataset Name:", 
+                font=("Arial", 10), fg="white", bg=APP_BG_COLOR).pack(anchor=tk.W)
+        
+        new_name_var = tk.StringVar()
+        suggested_name = self.generate_unique_dataset_name(existing_name)
+        new_name_var.set(suggested_name)
+        
+        new_name_entry = tk.Entry(name_frame, textvariable=new_name_var, 
+                                font=("Arial", 11), width=40)
+        new_name_entry.pack(fill=tk.X, pady=(5, 0))
+        
+        # Validation for new name
+        validation_label = tk.Label(name_frame, text="", 
+                                  font=("Arial", 9), bg=APP_BG_COLOR)
+        validation_label.pack(anchor=tk.W, pady=(2, 0))
+        
+        def validate_new_name(*args):
+            name = new_name_var.get().strip()
+            if not name:
+                validation_label.config(text="⚠️ Name cannot be empty", fg="#ff6b6b")
+                new_name_entry.config(bg="white")
+            else:
+                exists_result = self.detailed_dataset_exists_check(name)
+                if exists_result['exists']:
+                    validation_label.config(text="❌ Name already exists", fg="#ff6b6b")
+                    new_name_entry.config(bg="#ffcccc")
+                elif exists_result['in_db_but_missing']:
+                    validation_label.config(text="⚠️ Will cleanup old entry", fg="#856404")
+                    new_name_entry.config(bg="#fff3cd")
+                else:
+                    validation_label.config(text="✅ Name is available", fg="#4CAF50")
+                    new_name_entry.config(bg="#ccffcc")
+        
+        new_name_var.trace('w', validate_new_name)
+        validate_new_name()  # Initial validation
+        
+        # Option 2: Overwrite
+        overwrite_frame = tk.LabelFrame(options_frame, text="Option 2: Overwrite Existing Dataset", 
+                                      font=("Arial", 11, "bold"), fg="white", bg=APP_BG_COLOR)
+        overwrite_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        tk.Label(overwrite_frame, text="⚠️ This will permanently delete the existing dataset!", 
+                font=("Arial", 10), fg="#ff6b6b", bg=APP_BG_COLOR).pack(padx=10, pady=10)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg=APP_BG_COLOR)
+        button_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+        
+        def use_new_name():
+            name = new_name_var.get().strip()
+            exists_result = self.detailed_dataset_exists_check(name)
+            if name and not exists_result['exists']:
+                result['name'] = name
+                result['action'] = 'rename'
+                dialog.destroy()
+        
+        def overwrite_existing():
+            if messagebox.askyesno("Confirm Overwrite", 
+                                 f"Are you sure you want to overwrite the existing dataset '{existing_name}'?\n\n"
+                                 "This action cannot be undone!"):
+                result['name'] = existing_name
+                result['action'] = 'overwrite'
+                dialog.destroy()
+        
+        def cancel():
+            result['action'] = 'cancel'
+            dialog.destroy()
+        
+        tk.Button(button_frame, text="✅ Use New Name", command=use_new_name,
+                 font=("Arial", 11, "bold"), bg="#4CAF50", fg="white").pack(side=tk.LEFT, padx=(0, 10))
+        
+        tk.Button(button_frame, text="⚠️ Overwrite Existing", command=overwrite_existing,
+                 font=("Arial", 11, "bold"), bg="#ff6b6b", fg="white").pack(side=tk.LEFT, padx=(0, 10))
+        
+        tk.Button(button_frame, text="❌ Cancel", command=cancel,
+                 font=("Arial", 11, "bold"), bg="#6c757d", fg="white").pack(side=tk.RIGHT)
+        
+        # Focus on new name entry
+        new_name_entry.focus_set()
+        new_name_entry.select_range(0, tk.END)
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+        
+        return result
+    
     def label_images_temporarily(self):
         """Label images and store annotations temporarily (not saved to disk yet)"""
         try:
-            total_images = len(self.uploaded_images)
+            # Only process unannotated images
+            unannotated_images = [img for img in self.uploaded_images if img not in self.temp_annotations]
+            total_images = len(unannotated_images)
             labeled_count = 0
             
-            for i, image_path in enumerate(self.uploaded_images):
+            for i, image_path in enumerate(unannotated_images):
+                # Check if stop was requested
+                if self.stop_labeling_flag:
+                    self.after(0, lambda: self.status_var.set(f"🛑 Labeling stopped by user. {labeled_count}/{total_images} images completed."))
+                    break
+                    
                 # Update status
                 self.status_var.set(f"Labeling image {i+1}/{total_images}: {os.path.basename(image_path)}")
                 self.update()
@@ -2798,45 +3412,72 @@ class YOLOLabelerApp(tk.Tk):
                 if self.store_temp_annotation(image_path, results[0]):
                     labeled_count += 1
             
-            # Mark session as complete
-            self.is_labeling_session_active = True  # Keep true until dataset creation
+            # Mark session as complete only if not stopped
+            if not self.stop_labeling_flag:
+                self.is_labeling_session_active = False  # Labeling is done, enable dataset controls
+                print("🔧 DEBUG: Labeling completed - set is_labeling_session_active = False")
+                self.update_dataset_controls_state()  # Re-enable dataset controls
+                
+                # Complete
+                rejected_count = total_images - labeled_count
+                self.status_var.set(f"Labeling complete! {labeled_count}/{total_images} images annotated temporarily")
+                
+                # Show completion message
+                self.after(0, lambda: messagebox.showinfo("Labeling Complete", 
+                                                         f"Temporary labeling complete!\n\n"
+                                                         f"✅ Images labeled: {labeled_count} (with roller class)\n"
+                                                         f"❌ Images skipped: {rejected_count} (no roller class)\n"
+                                                         f"📁 Total processed: {total_images}\n\n"
+                                                         f"All detected classes are included in annotations.\n"
+                                                         f"Images must contain at least one 'roller' class to be included.\n"
+                                                         f"Click 'Create Dataset' to save them permanently."))
+            else:
+                self.is_labeling_session_active = False
+                print("🔧 DEBUG: Labeling stopped by user - set is_labeling_session_active = False")
+                self.after(0, self.update_dataset_controls_state)  # Re-enable dataset controls
             
-            # Complete
-            rejected_count = total_images - labeled_count
-            self.status_var.set(f"Labeling complete! {labeled_count}/{total_images} images annotated temporarily")
-            
-            # Show completion message
-            self.after(0, lambda: messagebox.showinfo("Labeling Complete", 
-                                                     f"Temporary labeling complete!\n\n"
-                                                     f"✅ Images labeled: {labeled_count} (with detections)\n"
-                                                     f"❌ Images skipped: {rejected_count} (no detections)\n"
-                                                     f"📁 Total processed: {total_images}\n\n"
-                                                     f"All detected classes are included in annotations.\n"
-                                                     f"Click 'Create Dataset' to save them permanently."))
+            # Update button states after completion/stop
+            self.after(0, self.update_start_button_state)
+            if self.stop_btn:
+                self.after(0, lambda: self.stop_btn.config(state=tk.DISABLED))
             
             # Update preview to show annotations
             self.after(0, self.update_image_previews)
             
         except Exception as e:
+            # Reset labeling session state on error
+            self.is_labeling_session_active = False
+            print("🔧 DEBUG: Labeling error - set is_labeling_session_active = False")
+            self.after(0, self.update_dataset_controls_state)  # Re-enable dataset controls
+            
             self.after(0, lambda: messagebox.showerror("Error", f"Labeling failed: {str(e)}"))
             self.status_var.set("Labeling failed")
+            # Reset button states on error
+            self.after(0, self.update_start_button_state)
+            if self.stop_btn:
+                self.after(0, lambda: self.stop_btn.config(state=tk.DISABLED))
     
     def store_temp_annotation(self, image_path, results):
-        """Store annotation temporarily in memory"""
+        """Store annotation temporarily in memory - only if roller class is present, but store ALL classes"""
         try:
-            # Store all detected classes, not just "roller"
+            # Store all detected classes, but only if image contains at least one "roller" class
             annotations = []
+            has_roller_class = False
             
             if results.boxes is not None:
                 for box in results.boxes:
                     class_id = int(box.cls[0].cpu().numpy())
                     class_name = self.yolo_model.names[class_id]
                     
+                    # Check if this is a roller class
+                    if class_name.lower() == "roller":
+                        has_roller_class = True
+                    
                     # Get bounding box coordinates
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                     confidence = float(box.conf[0].cpu().numpy())
                     
-                    # Store annotation info for all classes
+                    # Store annotation info for ALL classes (not just roller)
                     annotations.append({
                         'class_name': class_name,
                         'class_id': class_id,
@@ -2844,8 +3485,8 @@ class YOLOLabelerApp(tk.Tk):
                         'confidence': confidence
                     })
             
-            # Store the image if it contains any detections
-            if annotations:
+            # Only store the image if it contains at least one "roller" class, but store ALL annotations
+            if annotations and has_roller_class:
                 # Get image dimensions
                 image = cv2.imread(image_path)
                 if image is None:
@@ -2855,7 +3496,7 @@ class YOLOLabelerApp(tk.Tk):
                 
                 # Store in temporary annotations
                 self.temp_annotations[image_path] = {
-                    'annotations': annotations,
+                    'annotations': annotations,  # Store ALL classes found in the image
                     'image_width': width,
                     'image_height': height,
                     'filename': os.path.basename(image_path)
@@ -2865,7 +3506,10 @@ class YOLOLabelerApp(tk.Tk):
                 print(f"✅ Temporarily stored annotations for {os.path.basename(image_path)}: {len(annotations)} detections - Classes: {', '.join(set(class_names))}")
                 return True
             else:
-                print(f"Skipping image {os.path.basename(image_path)}: No detections found")
+                if not has_roller_class:
+                    print(f"Skipping image {os.path.basename(image_path)}: No 'roller' class detected")
+                else:
+                    print(f"Skipping image {os.path.basename(image_path)}: No detections found")
                 return False
                 
         except Exception as e:
@@ -2885,10 +3529,7 @@ class YOLOLabelerApp(tk.Tk):
             if self.dataset_type_var.get() == "new":
                 # Create new dataset
                 if os.path.exists(base_path):
-                    result = messagebox.askyesno("Dataset Exists", 
-                                               f"Dataset '{dataset_name}' already exists at:\n{base_path}\n\nOverwrite?")
-                    if not result:
-                        return False
+                    # If we reach here, user chose to overwrite
                     shutil.rmtree(base_path)
                 
                 os.makedirs(base_path, exist_ok=True)
@@ -3449,13 +4090,16 @@ class YOLOLabelerApp(tk.Tk):
     
     def create_dataset_from_labels(self):
         """Create a dataset in COCO format from temporary annotations"""
+        print("🔧 DEBUG: create_dataset_from_labels called")
         try:
             # Check if we have temporary annotations
             if not self.temp_annotations:
+                print("🔧 DEBUG: No temp annotations found")
                 messagebox.showwarning("No Annotations", "No temporary annotations found. Please run 'Start Labeling' first.")
                 self.status_var.set("❌ No annotations to save - Run 'Start Labeling' first")
                 return
             
+            print(f"🔧 DEBUG: Found {len(self.temp_annotations)} temp annotations")
             # Update status
             self.status_var.set("🔄 Preparing to create dataset from temporary annotations...")
             
@@ -3467,6 +4111,23 @@ class YOLOLabelerApp(tk.Tk):
                     messagebox.showerror("Error", "Please enter a dataset name")
                     self.status_var.set("❌ Dataset creation failed - No name provided")
                     return
+                
+                # Check if dataset name already exists and handle accordingly
+                if self.is_dataset_name_exists(dataset_name):
+                    result = self.prompt_for_unique_name(dataset_name)
+                    if result['action'] == 'cancel':
+                        self.status_var.set("❌ Dataset creation cancelled")
+                        return
+                    elif result['action'] == 'rename':
+                        dataset_name = result['name']
+                        # Update the entry field with the new name
+                        self.dataset_name_var.set(dataset_name)
+                    elif result['action'] == 'overwrite':
+                        # Continue with the existing name - will be handled in create_dataset_structure
+                        pass
+                else:
+                    # Check if name exists in DB but dataset is missing - clean it up
+                    self.cleanup_invalid_dataset_entries(dataset_name)
             else:
                 selected_dataset = self.existing_dataset_var.get()
                 if not selected_dataset:
@@ -3506,16 +4167,35 @@ class YOLOLabelerApp(tk.Tk):
             status_label.pack(pady=5)
             
             # Process temporary annotations and create dataset
+            print("🔧 DEBUG: Starting save_temp_annotations_to_dataset thread")
             threading.Thread(target=self.save_temp_annotations_to_dataset, 
                            args=(progress_window, progress_bar, status_label),
                            daemon=True).start()
             
         except Exception as e:
+            # Reset labeling session state on error
+            self.is_labeling_session_active = False
+            self.update_dataset_controls_state()  # Re-enable dataset controls
             messagebox.showerror("Error", f"Failed to create dataset: {str(e)}")
     
     def save_temp_annotations_to_dataset(self, progress_window, progress_bar, status_label):
         """Save temporary annotations to permanent dataset"""
+        print("🔧 DEBUG: save_temp_annotations_to_dataset started")
         try:
+            # Check if we have temporary annotations to process
+            if not self.temp_annotations:
+                error_msg = ("No temporary annotations found!\n\n"
+                           "Please run 'Start Labeling' first to create annotations for your uploaded images.\n\n"
+                           "Workflow:\n"
+                           "1. Upload images\n"
+                           "2. Click 'Start Labeling'\n" 
+                           "3. Click 'Create Dataset'")
+                progress_window.destroy()
+                messagebox.showerror("No Annotations", error_msg)
+                return
+            
+            print(f"🔄 Processing {len(self.temp_annotations)} temporary annotations...")
+            
             # Determine dataset info
             dataset_name = ""
             is_existing_dataset = self.dataset_type_var.get() == "existing"
@@ -3523,16 +4203,50 @@ class YOLOLabelerApp(tk.Tk):
             if is_existing_dataset:
                 selected_dataset = self.existing_dataset_var.get()
                 dataset_name = selected_dataset.split(" (")[0]
+                print(f"Adding to existing dataset: {dataset_name}")
             else:
                 dataset_name = self.dataset_name_var.get().strip()
+                print(f"Creating new dataset: {dataset_name}")
             
             self.current_dataset_name = dataset_name
             
-            # Get dataset path
-            if self.dataset_save_location:
-                self.current_dataset_path = os.path.join(self.dataset_save_location, dataset_name)
+            # Get dataset path - handle existing datasets properly
+            if is_existing_dataset:
+                # For existing datasets, get the path from the database
+                datasets = self.db_manager.get_datasets()
+                existing_dataset = None
+                
+                for dataset in datasets:
+                    if dataset['name'] == dataset_name:
+                        existing_dataset = dataset
+                        break
+                
+                if not existing_dataset:
+                    raise Exception(f"Dataset '{dataset_name}' not found in database")
+                
+                self.current_dataset_path = existing_dataset['path']
+                print(f"Using existing dataset path from database: {self.current_dataset_path}")
+                
+                if not os.path.exists(self.current_dataset_path):
+                    raise Exception(f"Dataset directory does not exist: {self.current_dataset_path}")
             else:
-                self.current_dataset_path = os.path.join(FILE_CONFIG['dataset_base_path'], dataset_name)
+                # For new datasets, use the dataset_save_location or default
+                if self.dataset_save_location:
+                    self.current_dataset_path = os.path.join(self.dataset_save_location, dataset_name)
+                else:
+                    self.current_dataset_path = os.path.join(FILE_CONFIG['dataset_base_path'], dataset_name)
+                print(f"Using new dataset path: {self.current_dataset_path}")
+            
+            # Ensure dataset directory and subdirectories exist (only create if they don't exist)
+            if not is_existing_dataset:
+                # For new datasets, create the directory structure
+                os.makedirs(self.current_dataset_path, exist_ok=True)
+                os.makedirs(os.path.join(self.current_dataset_path, "images"), exist_ok=True)
+            else:
+                # For existing datasets, just ensure the images subdirectory exists
+                os.makedirs(os.path.join(self.current_dataset_path, "images"), exist_ok=True)
+            
+            print(f"Using dataset path: {self.current_dataset_path}")
             
             # Initialize COCO structure
             coco_data = {
@@ -3556,21 +4270,49 @@ class YOLOLabelerApp(tk.Tk):
             
             if is_existing_dataset and os.path.exists(coco_json_path):
                 try:
+                    print(f"Loading existing COCO file from: {coco_json_path}")
                     with open(coco_json_path, 'r') as f:
                         coco_data = json.load(f)
                     
                     # Get existing counts for ID continuation
                     existing_image_count = len(coco_data.get("images", []))
                     existing_annotation_count = len(coco_data.get("annotations", []))
+                    existing_category_count = len(coco_data.get("categories", []))
                     
-                    print(f"Loading existing dataset: {existing_image_count} images, {existing_annotation_count} annotations")
+                    print(f"✅ Successfully loaded existing dataset:")
+                    print(f"   - {existing_image_count} existing images")
+                    print(f"   - {existing_annotation_count} existing annotations") 
+                    print(f"   - {existing_category_count} existing categories")
+                    
+                    # Debug: Show some existing image names and IDs
+                    if existing_image_count > 0:
+                        sample_images = [(img['id'], img['file_name']) for img in coco_data.get("images", [])[:5]]
+                        print(f"   - Sample existing images (ID, filename): {sample_images}")
+                    
+                    # Debug: Show some existing annotation IDs
+                    if existing_annotation_count > 0:
+                        sample_annotations = [(ann['id'], ann['image_id']) for ann in coco_data.get("annotations", [])[:5]]
+                        print(f"   - Sample existing annotations (ann_ID, image_ID): {sample_annotations}")
+                    
+                    # Verify data structure integrity
+                    existing_image_ids = [img["id"] for img in coco_data.get("images", [])]
+                    existing_annotation_ids = [ann["id"] for ann in coco_data.get("annotations", [])]
+                    print(f"   - Image ID range: {min(existing_image_ids)} to {max(existing_image_ids)}")
+                    print(f"   - Annotation ID range: {min(existing_annotation_ids)} to {max(existing_annotation_ids)}")
                     
                 except Exception as e:
-                    print(f"Error loading existing COCO data: {e}")
+                    print(f"❌ Error loading existing COCO data: {e}")
+                    print(f"   Will start with empty dataset structure")
                     # Continue with empty structure if loading fails
+            else:
+                if is_existing_dataset:
+                    print(f"⚠️  Expected COCO file not found: {coco_json_path}")
+                else:
+                    print(f"Creating new dataset structure")
             
             # Ensure categories exist for all classes found in temp annotations
             existing_categories = {cat['name']: cat['id'] for cat in coco_data.get("categories", [])}
+            print(f"Existing categories: {existing_categories}")
             
             # Find all unique classes in temp annotations
             all_classes = set()
@@ -3578,10 +4320,14 @@ class YOLOLabelerApp(tk.Tk):
                 for annotation in temp_data['annotations']:
                     all_classes.add(annotation['class_name'])
             
+            print(f"Classes found in temp annotations: {all_classes}")
+            
             # Add any missing categories
             next_category_id = max([cat['id'] for cat in coco_data.get("categories", [])], default=0) + 1
+            new_categories_added = 0
             for class_name in all_classes:
                 if class_name not in existing_categories:
+                    print(f"Adding new category: {class_name} with ID {next_category_id}")
                     coco_data["categories"].append({
                         "id": next_category_id,
                         "name": class_name,
@@ -3589,11 +4335,54 @@ class YOLOLabelerApp(tk.Tk):
                     })
                     existing_categories[class_name] = next_category_id
                     next_category_id += 1
+                    new_categories_added += 1
             
-            # Start IDs after existing ones
-            image_id = existing_image_count + 1
-            annotation_id = existing_annotation_count + 1
+            print(f"Added {new_categories_added} new categories")
+            
+            # Start IDs after existing ones - use max ID instead of count to prevent conflicts
+            existing_image_ids = [img["id"] for img in coco_data.get("images", [])]
+            existing_annotation_ids = [ann["id"] for ann in coco_data.get("annotations", [])]
+            
+            image_id = max(existing_image_ids, default=0) + 1
+            annotation_id = max(existing_annotation_ids, default=0) + 1
+            
+            print(f"ID assignment:")
+            print(f"   Existing image IDs: {existing_image_ids[:10]}{'...' if len(existing_image_ids) > 10 else ''}")
+            print(f"   Existing annotation IDs: {existing_annotation_ids[:10]}{'...' if len(existing_annotation_ids) > 10 else ''}")
+            print(f"   Next image_id: {image_id}")
+            print(f"   Next annotation_id: {annotation_id}")
+            
             saved_count = 0
+            skipped_count = 0
+            
+            print(f"Processing {len(self.temp_annotations)} temporary annotations")
+            print(f"Starting image_id: {image_id}, Starting annotation_id: {annotation_id}")
+            
+            # Create set of existing image filenames for duplicate checking
+            existing_image_filenames = set()
+            if is_existing_dataset:
+                # Check both COCO data and filesystem for existing images
+                coco_image_filenames = {img['file_name'] for img in coco_data.get('images', [])}
+                
+                images_dir = os.path.join(self.current_dataset_path, "images")
+                filesystem_image_filenames = set()
+                if os.path.exists(images_dir):
+                    filesystem_image_filenames = {f for f in os.listdir(images_dir) 
+                                              if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))}
+                
+                # Use union of both sources for comprehensive duplicate checking
+                existing_image_filenames = coco_image_filenames.union(filesystem_image_filenames)
+                
+                print(f"Duplicate checking setup:")
+                print(f"   Images in COCO: {len(coco_image_filenames)} - {list(coco_image_filenames)[:5]}")
+                print(f"   Images in filesystem: {len(filesystem_image_filenames)} - {list(filesystem_image_filenames)[:5]}")
+                print(f"   Combined for duplicate checking: {len(existing_image_filenames)}")
+            
+            # SAFETY CHECK: Backup the existing COCO data before processing
+            if is_existing_dataset and coco_data.get('images'):
+                backup_images = coco_data['images'].copy()
+                backup_annotations = coco_data['annotations'].copy()
+                print(f"🛡️  Backed up {len(backup_images)} images and {len(backup_annotations)} annotations")
             
             # Process each temporarily annotated image
             for i, (image_path, temp_data) in enumerate(self.temp_annotations.items()):
@@ -3602,11 +4391,20 @@ class YOLOLabelerApp(tk.Tk):
                 self.after(0, lambda: progress_bar.config(value=i))
                 
                 try:
-                    # Copy image to dataset
+                    # Get image filename
                     image_filename = temp_data['filename']
+                    print(f"Processing image {i+1}/{len(self.temp_annotations)}: {image_filename} with {len(temp_data['annotations'])} annotations")
+                    
+                    # Check for duplicates in existing dataset
+                    if image_filename in existing_image_filenames:
+                        print(f"Skipping duplicate image: {image_filename}")
+                        skipped_count += 1
+                        continue
+                    
+                    # Copy image to dataset
                     image_name, image_ext = os.path.splitext(image_filename)
                     
-                    # Create unique filename if necessary
+                    # Create unique filename if necessary (extra safety)
                     dest_image_path = os.path.join(self.current_dataset_path, "images", image_filename)
                     counter = 1
                     while os.path.exists(dest_image_path):
@@ -3616,6 +4414,9 @@ class YOLOLabelerApp(tk.Tk):
                         counter += 1
                     
                     shutil.copy2(image_path, dest_image_path)
+                    
+                    # Add to existing filenames set
+                    existing_image_filenames.add(image_filename)
                     
                     # Add image info to COCO
                     coco_data["images"].append({
@@ -3627,6 +4428,7 @@ class YOLOLabelerApp(tk.Tk):
                     })
                     
                     # Add annotations to COCO
+                    annotations_added_for_image = 0
                     for annotation in temp_data['annotations']:
                         x1, y1, x2, y2 = annotation['bbox']
                         width = x2 - x1
@@ -3646,7 +4448,9 @@ class YOLOLabelerApp(tk.Tk):
                             "confidence": annotation['confidence']
                         })
                         annotation_id += 1
+                        annotations_added_for_image += 1
                     
+                    print(f"Added {annotations_added_for_image} annotations for {image_filename}")
                     image_id += 1
                     saved_count += 1
                     
@@ -3656,8 +4460,41 @@ class YOLOLabelerApp(tk.Tk):
             
             # Save COCO annotations
             coco_json_path = os.path.join(self.current_dataset_path, "annotations.json")
+            
+            # Before saving, verify the data integrity
+            final_image_count = len(coco_data['images'])
+            final_annotation_count = len(coco_data['annotations'])
+            final_category_count = len(coco_data['categories'])
+            
+            print(f"📊 About to save COCO file with:")
+            print(f"   - Total images: {final_image_count} (existing: {existing_image_count}, new: {saved_count})")
+            print(f"   - Total annotations: {final_annotation_count} (existing: {existing_annotation_count}, new: {final_annotation_count - existing_annotation_count})")
+            print(f"   - Total categories: {final_category_count}")
+            
+            # Verify that existing data wasn't lost
+            if is_existing_dataset:
+                if final_image_count < existing_image_count:
+                    print(f"🚨 CRITICAL ERROR: Lost {existing_image_count - final_image_count} existing images!")
+                    # Show which images are missing
+                    final_image_filenames = {img['file_name'] for img in coco_data['images']}
+                    print(f"   Images currently in dataset: {list(final_image_filenames)[:10]}")
+                    
+                if final_annotation_count < existing_annotation_count:
+                    print(f"🚨 CRITICAL ERROR: Lost {existing_annotation_count - final_annotation_count} existing annotations!")
+                    
+                # Show final image IDs and filenames
+                if final_image_count > 0:
+                    final_images_debug = [(img['id'], img['file_name']) for img in coco_data['images']]
+                    print(f"   Final images in dataset: {final_images_debug}")
+            
             with open(coco_json_path, 'w') as f:
                 json.dump(coco_data, f, indent=2)
+            
+            print(f"✅ COCO file saved successfully to: {coco_json_path}")
+            print(f"Final COCO data summary:")
+            print(f"  Total images: {len(coco_data['images'])}")
+            print(f"  Total annotations: {len(coco_data['annotations'])}")
+            print(f"  Total categories: {len(coco_data['categories'])}")
             
             # Update dataset image count in database
             total_images = existing_image_count + saved_count
@@ -3666,12 +4503,24 @@ class YOLOLabelerApp(tk.Tk):
             # Clear temporary annotations
             self.temp_annotations = {}
             self.is_labeling_session_active = False
+            print("🔧 DEBUG: Dataset creation successful - set is_labeling_session_active = False")
+            self.update_dataset_controls_state()  # Re-enable dataset controls
+            
+            # Update button states
+            self.update_start_button_state()
+            if self.stop_btn:
+                self.stop_btn.config(state=tk.DISABLED)
             
             # Prepare success message
             is_existing = self.dataset_type_var.get() == "existing"
             if is_existing:
                 action_text = "Images added to existing dataset successfully!"
-                detail_text = f"✅ New images added: {saved_count}\n📊 Total images in dataset: {total_images}"
+                if skipped_count > 0:
+                    detail_text = (f"✅ New images added: {saved_count}\n"
+                                 f"⏭️ Duplicates skipped: {skipped_count}\n"
+                                 f"📊 Total images in dataset: {total_images}")
+                else:
+                    detail_text = f"✅ New images added: {saved_count}\n📊 Total images in dataset: {total_images}"
             else:
                 action_text = "Dataset created successfully!"
                 detail_text = f"✅ Images saved: {saved_count}"
@@ -3690,107 +4539,14 @@ class YOLOLabelerApp(tk.Tk):
             self.after(0, self.update_image_previews)  # Update preview to remove annotations
             
         except Exception as e:
+            # Reset labeling session state on error
+            self.is_labeling_session_active = False
+            print("🔧 DEBUG: Dataset save error - set is_labeling_session_active = False")
+            self.after(0, self.update_dataset_controls_state)  # Re-enable dataset controls
+            
             self.after(0, lambda: progress_window.destroy())
             self.after(0, lambda: messagebox.showerror("Error", f"Failed to save dataset: {str(e)}"))
             print(f"Error saving temporary annotations: {e}")
-            progress_bar['maximum'] = len(image_files)
-            annotation_id = 1
-            
-            for idx, image_file in enumerate(image_files):
-                image_path = os.path.join(images_dir, image_file)
-                
-                # Update progress
-                progress_bar['value'] = idx + 1
-                status_label.config(text=f"Processing: {image_file}")
-                progress_window.update()
-                
-                try:
-                    # Get image dimensions
-                    with Image.open(image_path) as img:
-                        width, height = img.size
-                    
-                    # Add image to COCO
-                    image_id = idx + 1
-                    coco_data["images"].append({
-                        "id": image_id,
-                        "width": width,
-                        "height": height,
-                        "file_name": image_file,
-                        "file_path": image_path
-                    })
-                    
-                    # Get annotations for this image
-                    cursor.execute("""
-                        SELECT class_name, x, y, width, height, confidence 
-                        FROM annotations 
-                        WHERE dataset_name = %s AND image_filename = %s
-                    """, (self.current_dataset_name, image_file))
-                    
-                    annotations = cursor.fetchall()
-                    
-                    # Add annotations to COCO
-                    for ann in annotations:
-                        class_name, x, y, w, h, confidence = ann
-                        
-                        if class_name in class_to_id:
-                            # Convert relative coordinates to absolute
-                            abs_x = x * width
-                            abs_y = y * height
-                            abs_w = w * width
-                            abs_h = h * height
-                            
-                            coco_data["annotations"].append({
-                                "id": annotation_id,
-                                "image_id": image_id,
-                                "category_id": class_to_id[class_name],
-                                "bbox": [abs_x, abs_y, abs_w, abs_h],
-                                "area": abs_w * abs_h,
-                                "iscrowd": 0,
-                                "confidence": confidence
-                            })
-                            annotation_id += 1
-                    
-                except Exception as e:
-                    print(f"Error processing {image_file}: {str(e)}")
-                    continue
-            
-            # Save COCO file
-            annotations_file = os.path.join(dataset_path, 'annotations.json')
-            
-            try:
-                with open(annotations_file, 'w') as f:
-                    json.dump(coco_data, f, indent=2)
-                
-                progress_window.destroy()
-                
-                # Show success message
-                total_images = len(coco_data["images"])
-                total_annotations = len(coco_data["annotations"])
-                total_categories = len(coco_data["categories"])
-                
-                messagebox.showinfo(
-                    "Dataset Created Successfully!", 
-                    f"COCO dataset created successfully!\n\n"
-                    f"📊 Statistics:\n"
-                    f"   • Images: {total_images}\n"
-                    f"   • Annotations: {total_annotations}\n"
-                    f"   • Categories: {total_categories}\n\n"
-                    f"📁 Location: {annotations_file}\n\n"
-                    f"✅ Dataset is ready for preview and Roboflow upload!"
-                )
-                
-                # Refresh all dataset dropdowns
-                self.refresh_all_datasets()
-                
-            except Exception as e:
-                progress_window.destroy()
-                messagebox.showerror("Save Error", f"Error saving COCO file: {str(e)}")
-                return
-            
-        except Exception as e:
-            if 'progress_window' in locals():
-                progress_window.destroy()
-            messagebox.showerror("Error", f"Error creating dataset: {str(e)}")
 
     def export_to_coco(self):
         """Validate and display COCO JSON format (dataset is already in COCO format)"""
@@ -3871,7 +4627,16 @@ This dataset is ready for upload to Roboflow!"""
         # Clear temporary annotations
         self.temp_annotations = {}
         self.is_labeling_session_active = False
+        print("🔧 DEBUG: Clear all called - set is_labeling_session_active = False")
+        self.update_dataset_controls_state()  # Re-enable dataset controls
         self.temp_session_name = ""
+        self.stop_labeling_flag = False
+        
+        # Reset button states
+        if self.start_btn:
+            self.start_btn.config(state=tk.DISABLED)
+        if self.stop_btn:
+            self.stop_btn.config(state=tk.DISABLED)
         
         # Reset current image state variables
         self.current_image_index = 0
@@ -3906,6 +4671,13 @@ This dataset is ready for upload to Roboflow!"""
         self.location_info_var.set("Dataset save location: datasets (default)")
         if hasattr(self, 'existing_dataset_var'):
             self.existing_dataset_var.set("")
+        
+        # Reset dataset name validation
+        if hasattr(self, 'dataset_entry'):
+            self.dataset_entry.config(bg="white")
+        if hasattr(self, 'dataset_name_indicator'):
+            self.dataset_name_indicator.config(text="", fg="white")
+        self.hide_suggestion_button()
         
         # Clear all image canvases
         if hasattr(self, 'clear_canvases'):
@@ -3948,6 +4720,7 @@ This dataset is ready for upload to Roboflow!"""
                 
                 # Load projects directly
                 projects = []
+                self.project_mapping = {}  # Store mapping of display name to project ID
                 try:
                     # Use the project_list property we discovered!
                     self.log_rf_status(f"🔍 Loading projects from workspace...")
@@ -3963,9 +4736,17 @@ This dataset is ready for upload to Roboflow!"""
                         else:
                             project_slug = project_id
                         
-                        if project_slug:
-                            projects.append(project_slug)
+                        if project_slug and project_name:
+                            # Display project name in dropdown, but store mapping to slug
+                            display_name = f"{project_name} ({project_slug})"
+                            projects.append(display_name)
+                            self.project_mapping[display_name] = project_slug
                             self.log_rf_status(f"Found project: {project_name} (slug: {project_slug})")
+                        elif project_slug:
+                            # Fallback to slug if name is not available
+                            projects.append(project_slug)
+                            self.project_mapping[project_slug] = project_slug
+                            self.log_rf_status(f"Found project: {project_slug}")
                     
                     self.log_rf_status(f"Total projects discovered: {len(projects)}")
                     
@@ -3973,6 +4754,7 @@ This dataset is ready for upload to Roboflow!"""
                     self.log_rf_status(f"Project discovery failed: {proj_error}")
                     # Fallback to known project
                     projects = ["chatter-scratch-damage-2"]
+                    self.project_mapping = {"chatter-scratch-damage-2": "chatter-scratch-damage-2"}
                 
                 # Update project dropdown
                 self.rf_project_dropdown['values'] = projects
@@ -4129,15 +4911,21 @@ This dataset is ready for upload to Roboflow!"""
                     
                     self.log_rf_status(f"📁 Project slug: {project_slug}")
                     
-                    # Update the project dropdown with the new project
+                    # Update the project dropdown with the new project using display format
+                    display_name = f"{project_name} ({project_slug})"
                     current_projects = list(self.rf_project_dropdown['values'])
-                    if project_slug not in current_projects:
-                        current_projects.append(project_slug)
+                    if display_name not in current_projects:
+                        current_projects.append(display_name)
                         self.rf_project_dropdown['values'] = current_projects
                     
+                    # Update the project mapping
+                    if not hasattr(self, 'project_mapping'):
+                        self.project_mapping = {}
+                    self.project_mapping[display_name] = project_slug
+                    
                     # Select the newly created project
-                    self.rf_project_dropdown.set(project_slug)
-                    self.rf_project_var.set(project_slug)
+                    self.rf_project_dropdown.set(display_name)
+                    self.rf_project_var.set(display_name)
                     
                     # Update status
                     self.rf_create_project_status_var.set(f"✅ Project '{project_name}' created successfully!")
@@ -4218,15 +5006,23 @@ This dataset is ready for upload to Roboflow!"""
     def on_project_selected(self, event=None):
         """Step 2: Handle project selection"""
         try:
-            project_name = self.rf_project_var.get()
+            project_display_name = self.rf_project_var.get()
             
-            if not project_name or not hasattr(self, 'roboflow_instance'):
+            if not project_display_name or not hasattr(self, 'roboflow_instance'):
                 return
+            
+            # Get the actual project slug from the mapping
+            if hasattr(self, 'project_mapping') and project_display_name in self.project_mapping:
+                project_slug = self.project_mapping[project_display_name]
+            else:
+                # Fallback: assume the display name is the slug
+                project_slug = project_display_name
             
             self.rf_project_status_var.set("🟡 Validating project...")
             self.update()
             
-            self.log_rf_status(f"Selected project: {project_name}")
+            self.log_rf_status(f"Selected project: {project_display_name}")
+            self.log_rf_status(f"Using project slug: {project_slug}")
             
             # Validate project access
             try:
@@ -4236,9 +5032,9 @@ This dataset is ready for upload to Roboflow!"""
                 project = None
                 access_error = None
                 
-                # Method 1: Try direct project access
+                # Method 1: Try direct project access using the slug
                 try:
-                    project = workspace.project(project_name)
+                    project = workspace.project(project_slug)
                     self.log_rf_status(f"✅ Direct project access successful")
                 except Exception as direct_error:
                     self.log_rf_status(f"⚠️ Direct access failed: {direct_error}")
@@ -4257,7 +5053,7 @@ This dataset is ready for upload to Roboflow!"""
                             self.log_rf_status(f"   Found: {proj_name} (slug: {proj_slug})")
                             
                             # Try to match by slug or name
-                            if proj_slug == project_name or proj_name.lower() == project_name.lower():
+                            if proj_slug == project_slug or proj_name.lower() == project_slug.lower():
                                 project = proj
                                 self.log_rf_status(f"✅ Found matching project: {proj_name}")
                                 break
@@ -4275,7 +5071,7 @@ This dataset is ready for upload to Roboflow!"""
                         workspace_id = workspace_data.get('workspace', 'default')
                         
                         # Try to get project via REST API
-                        project_url = f"https://api.roboflow.com/{workspace_id}/{project_name}"
+                        project_url = f"https://api.roboflow.com/{workspace_id}/{project_slug}"
                         project_response = requests.get(project_url, params={"api_key": api_key})
                         
                         if project_response.status_code == 200:
@@ -4284,10 +5080,10 @@ This dataset is ready for upload to Roboflow!"""
                             # Create a mock project object
                             class MockProjectInfo:
                                 def __init__(self, data):
-                                    self.name = data.get('project', {}).get('name', project_name)
+                                    self.name = data.get('project', {}).get('name', project_slug)
                                     self.type = data.get('project', {}).get('type', 'object-detection')
                                     self.images = data.get('project', {}).get('images', 0)
-                                    self.id = project_name
+                                    self.id = project_slug
                             
                             project = MockProjectInfo(project_data)
                             self.log_rf_status(f"✅ REST API project access successful")
@@ -4299,7 +5095,7 @@ This dataset is ready for upload to Roboflow!"""
                 
                 if project:
                     # Get project details
-                    project_display_name = getattr(project, 'name', project_name)
+                    project_display_name = getattr(project, 'name', project_slug)
                     project_type = getattr(project, 'type', 'unknown')
                     project_images = getattr(project, 'images', 0)
 
@@ -4311,12 +5107,12 @@ This dataset is ready for upload to Roboflow!"""
                     dataset_name = self.rf_dataset_var.get()
                     if dataset_name and hasattr(self, 'current_rf_dataset_path'):
                         self.rf_upload_btn.config(state="normal")
-                        self.log_rf_status(f"🎯 Ready to upload '{dataset_name}' to '{project_name}'")
+                        self.log_rf_status(f"🎯 Ready to upload '{dataset_name}' to '{project_display_name}'")
                     else:
                         self.rf_upload_btn.config(state="disabled")
                         self.rf_dataset_info_var.set("Select a dataset to upload to this project")
                 else:
-                    raise Exception(f"Could not access project '{project_name}'. Original error: {access_error}")
+                    raise Exception(f"Could not access project '{project_display_name}'. Original error: {access_error}")
                     
             except Exception as project_error:
                 self.rf_project_status_var.set(f"🔴 Error accessing project: {project_error}")
@@ -4329,26 +5125,42 @@ This dataset is ready for upload to Roboflow!"""
     def refresh_rf_datasets(self):
         """Refresh datasets for Roboflow upload - show only datasets with COCO format"""
         try:
+            print(f"🔍 Refreshing Roboflow datasets...")
             datasets = []
             
             # Get datasets from database
             db_datasets = self.db_manager.get_datasets()
+            print(f"   Found {len(db_datasets)} datasets in database")
+            
             for ds in db_datasets:
+                print(f"   Checking database dataset: {ds['name']} -> {ds['path']}")
+                
                 # First check if dataset folder actually exists
                 if not os.path.exists(ds['path']):
+                    print(f"     ❌ Dataset path does not exist: {ds['path']}")
                     continue  # Skip datasets with non-existent paths
                     
                 coco_file = os.path.join(ds['path'], "annotations.json")
+                print(f"     COCO file: {coco_file}")
+                print(f"     COCO file exists: {os.path.exists(coco_file)}")
+                
                 if os.path.exists(coco_file):
                     try:
                         import json
                         with open(coco_file, 'r') as f:
                             coco_data = json.load(f)
+                        
+                        image_count = len(coco_data.get('images', []))
+                        annotation_count = len(coco_data.get('annotations', []))
+                        print(f"     ✅ Valid COCO dataset: {image_count} images, {annotation_count} annotations")
+                        
                         # Only add if valid COCO file
                         datasets.append(f"{ds['name']} (COCO)")
-                    except:
-                        # Skip datasets with invalid COCO files
+                    except Exception as e:
+                        print(f"     ❌ Invalid COCO file: {e}")
                         continue
+                else:
+                    print(f"     ❌ COCO file not found")
                 # Skip datasets without COCO format
             
             # Also scan default datasets folder
@@ -4393,26 +5205,39 @@ This dataset is ready for upload to Roboflow!"""
             if not selected:
                 return
             
+            print(f"🔍 Roboflow dataset selection:")
+            print(f"   Selected: {selected}")
+            
             # Extract dataset name from selection (remove status indicators)
             # Format: "dataset_name (COCO)"
             dataset_name = selected.replace(" (COCO)", "")
+            print(f"   Dataset name: {dataset_name}")
             
             # Find dataset path
             dataset_path = None
             db_datasets = self.db_manager.get_datasets()
+            print(f"   Database datasets found: {len(db_datasets)}")
+            
             for ds in db_datasets:
+                print(f"     - {ds['name']} -> {ds['path']}")
                 if ds['name'] == dataset_name:
                     dataset_path = ds['path']
+                    print(f"   ✅ Found in database: {dataset_path}")
                     break
             
             if not dataset_path:
-                # Check default datasets folder
-                default_path = os.path.join("datasets", dataset_name)
+                # Check default datasets folder  
+                default_path = os.path.join(FILE_CONFIG['dataset_base_path'], dataset_name)
+                print(f"   Checking default path: {default_path}")
                 if os.path.exists(default_path):
                     dataset_path = default_path
+                    print(f"   ✅ Found in default location: {dataset_path}")
             
             if dataset_path:
                 coco_file = os.path.join(dataset_path, "annotations.json")
+                print(f"   COCO file path: {coco_file}")
+                print(f"   COCO file exists: {os.path.exists(coco_file)}")
+                
                 try:
                     # Load COCO data to show info
                     import json
@@ -4448,12 +5273,19 @@ This dataset is ready for upload to Roboflow!"""
         try:
             # Validate all steps are complete
             api_key = self.rf_api_key_var.get().strip()
-            project_id = self.rf_project_var.get().strip()
+            project_display_name = self.rf_project_var.get().strip()
             dataset_name = self.rf_dataset_var.get()
             
-            if not all([api_key, project_id, dataset_name]):
+            if not all([api_key, project_display_name, dataset_name]):
                 messagebox.showerror("Error", "Please complete all steps before uploading!")
                 return
+            
+            # Get the actual project slug from the mapping
+            if hasattr(self, 'project_mapping') and project_display_name in self.project_mapping:
+                project_id = self.project_mapping[project_display_name]
+            else:
+                # Fallback: assume the display name is the slug
+                project_id = project_display_name
             
             if not hasattr(self, 'current_rf_dataset_path'):
                 messagebox.showerror("Error", "Please select a dataset first!")
@@ -4464,11 +5296,44 @@ This dataset is ready for upload to Roboflow!"""
             coco_file = os.path.join(dataset_path, "annotations.json")
             images_dir = os.path.join(dataset_path, "images")
             
+            print(f"🔍 Roboflow Upload Validation:")
+            print(f"   Dataset path: {dataset_path}")
+            print(f"   COCO file: {coco_file}")
+            print(f"   Images dir: {images_dir}")
+            print(f"   COCO file exists: {os.path.exists(coco_file)}")
+            print(f"   Images dir exists: {os.path.exists(images_dir)}")
+            
             if not os.path.exists(coco_file):
                 messagebox.showerror("Error", f"COCO annotations file not found: {coco_file}")
                 return
                 
             if not os.path.exists(images_dir):
+                messagebox.showerror("Error", f"Images directory not found: {images_dir}")
+                return
+            
+            # Check COCO file content
+            try:
+                with open(coco_file, 'r') as f:
+                    coco_data = json.load(f)
+                image_count = len(coco_data.get('images', []))
+                annotation_count = len(coco_data.get('annotations', []))
+                category_count = len(coco_data.get('categories', []))
+                
+                print(f"   COCO content validation:")
+                print(f"     Images: {image_count}")
+                print(f"     Annotations: {annotation_count}")
+                print(f"     Categories: {category_count}")
+                
+                if image_count == 0:
+                    messagebox.showerror("Error", "Dataset contains no images!")
+                    return
+                    
+                if annotation_count == 0:
+                    messagebox.showwarning("Warning", "Dataset contains no annotations! Uploading images without annotations.")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Invalid COCO file: {e}")
+                return
                 messagebox.showerror("Error", f"Images directory not found: {images_dir}")
                 return
             
@@ -4484,40 +5349,44 @@ This dataset is ready for upload to Roboflow!"""
             
             self.log_rf_status("🚀 Starting Roboflow workspace upload...")
             self.log_rf_status(f"📁 Dataset: {dataset_name}")
-            self.log_rf_status(f"📦 Project: {project_id}")
-            self.log_rf_status(f"� Dataset Path: {dataset_path}")
-            self.log_rf_status(f"📋 Upload Method: workspace.upload_dataset()")
-            self.log_rf_status(f"⚡ Workers: 12 (high performance)")
+            self.log_rf_status(f"📦 Project: {project_display_name} (slug: {project_id})")
+            self.log_rf_status(f"📂 Dataset Path: {dataset_path}")
+            self.log_rf_status(f"📋 Upload Method: workspace.upload_dataset() - bulk upload")
+            self.log_rf_status(f"⚡ Mode: Batch upload with annotations")
             
             # Start workspace upload in thread
-            self.start_workspace_upload(dataset_path, api_key, project_id)
+            self.start_workspace_dataset_upload(dataset_path, api_key, project_id)
             
         except Exception as e:
             self.log_rf_status(f"❌ Upload error: {e}")
             messagebox.showerror("Upload Error", f"Upload preparation failed: {e}")
     
-    def start_workspace_upload(self, dataset_path, api_key, project_id):
-        """Start the workspace upload process in a separate thread"""
+    def start_individual_upload(self, coco_file, api_key, project_id):
+        """Start the individual upload process in a separate thread"""
         # Disable upload button and start progress
         self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
         self.upload_in_progress = True
         
+        # Create upload queue for progress messages
+        import queue
+        self.upload_queue = queue.Queue()
+        
         # Start upload thread
         self.upload_thread = threading.Thread(
-            target=self.workspace_upload_worker,
-            args=(dataset_path, api_key, project_id),
+            target=self.individual_upload_worker,
+            args=(coco_file, api_key, project_id),
             daemon=True
         )
         self.upload_thread.start()
         
         # Start progress monitor
-        self.monitor_workspace_upload_progress()
+        self.monitor_individual_upload_progress()
 
-    def workspace_upload_worker(self, dataset_path, api_key, project_id):
-        """Worker function that runs workspace upload in separate thread"""
+    def individual_upload_worker(self, coco_file, api_key, project_id):
+        """Worker function that runs individual upload in separate thread"""
         try:
-            # Call the actual workspace upload function
-            success = self.upload_dataset_using_workspace(dataset_path, api_key, project_id)
+            # Call the actual individual upload function with annotations enabled
+            success = self.upload_dataset_to_roboflow_with_annotations(coco_file, api_key, project_id)
             
             # Send result back to main thread
             if hasattr(self, 'upload_queue'):
@@ -4532,34 +5401,225 @@ This dataset is ready for upload to Roboflow!"""
             else:
                 self.after(0, lambda: self.handle_upload_error(str(e)))
 
-    def monitor_workspace_upload_progress(self):
-        """Monitor workspace upload progress and update UI"""
+    def monitor_individual_upload_progress(self):
+        """Monitor individual upload progress"""
         try:
-            # Check for messages from upload thread
-            while hasattr(self, 'upload_queue'):
+            if hasattr(self, 'upload_queue'):
                 try:
-                    message_type, data = self.upload_queue.get_nowait()
+                    # Check for messages from upload thread
+                    message_type, message_data = self.upload_queue.get_nowait()
                     
-                    if message_type == 'complete':
-                        self.handle_upload_complete(data)
-                        return
-                        
+                    if message_type == 'progress':
+                        self.log_rf_status(message_data)
+                    elif message_type == 'complete':
+                        self.handle_upload_complete(message_data)
+                        return  # Stop monitoring
                     elif message_type == 'error':
-                        self.handle_upload_error(data)
-                        return
-                        
-                    elif message_type == 'progress':
-                        self.log_rf_status(data)
+                        self.handle_upload_error(message_data)
+                        return  # Stop monitoring
                         
                 except queue.Empty:
-                    break
-                    
+                    pass  # No new messages
+            
+            # Continue monitoring
+            if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
+                self.after(500, self.monitor_individual_upload_progress)  # Check every 500ms
+                
         except Exception as e:
-            self.log_rf_status(f"⚠️ Progress monitor error: {e}")
+            self.log_rf_status(f"❌ Monitor error: {e}")
+
+    def start_workspace_dataset_upload(self, dataset_path, api_key, project_id):
+        """Start the workspace dataset upload process using workspace.upload_dataset()"""
+        # Disable upload button and start progress
+        self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
+        self.upload_in_progress = True
         
-        # Continue monitoring if upload is still in progress
-        if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
-            self.after(1000, self.monitor_workspace_upload_progress)
+        # Create upload queue for progress messages
+        import queue
+        self.upload_queue = queue.Queue()
+        
+        # Start upload thread
+        self.upload_thread = threading.Thread(
+            target=self.workspace_dataset_upload_worker,
+            args=(dataset_path, api_key, project_id),
+            daemon=True
+        )
+        self.upload_thread.start()
+        
+        # Start progress monitor
+        self.monitor_workspace_dataset_upload_progress()
+
+    def workspace_dataset_upload_worker(self, dataset_path, api_key, project_id):
+        """Worker function that runs workspace.upload_dataset() in separate thread"""
+        try:
+            # Call the new workspace upload function
+            success = self.upload_dataset_using_workspace_method(dataset_path, api_key, project_id)
+            
+            # Send result back to main thread
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('complete', success))
+            else:
+                # Fallback if upload_queue doesn't exist
+                self.after(0, lambda: self.handle_upload_complete(success))
+            
+        except Exception as e:
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('error', str(e)))
+            else:
+                self.after(0, lambda: self.handle_upload_error(str(e)))
+
+    def monitor_workspace_dataset_upload_progress(self):
+        """Monitor workspace dataset upload progress"""
+        try:
+            if hasattr(self, 'upload_queue'):
+                try:
+                    # Check for messages from upload thread
+                    message_type, message_data = self.upload_queue.get_nowait()
+                    
+                    if message_type == 'progress':
+                        self.log_rf_status(message_data)
+                    elif message_type == 'complete':
+                        self.handle_upload_complete(message_data)
+                        return  # Stop monitoring
+                    elif message_type == 'error':
+                        self.handle_upload_error(message_data)
+                        return  # Stop monitoring
+                        
+                except queue.Empty:
+                    pass  # No new messages
+            
+            # Continue monitoring
+            if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
+                self.after(500, self.monitor_workspace_dataset_upload_progress)  # Check every 500ms
+                
+        except Exception as e:
+            self.log_rf_status(f"❌ Monitor error: {e}")
+
+    def upload_dataset_using_workspace_method(self, dataset_path, api_key, project_id):
+        """Upload dataset using the workspace.upload_dataset() method"""
+        try:
+            import roboflow
+            import json
+            import os
+            
+            # Log start of workspace upload
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', "✅ Starting workspace dataset upload"))
+            else:
+                self.after(0, lambda: self.log_rf_status("✅ Starting workspace dataset upload"))
+            
+            # Initialize Roboflow with API key
+            progress_msg = "🔄 Initializing Roboflow SDK..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', progress_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(progress_msg))
+            
+            rf = roboflow.Roboflow(api_key=api_key)
+            
+            # Get workspace
+            workspace_msg = "🔄 Getting workspace..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', workspace_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(workspace_msg))
+            
+            workspace = rf.workspace()
+            workspace_id = workspace.id if hasattr(workspace, 'id') else 'default'
+            
+            workspace_info_msg = f"✅ Workspace: {workspace_id}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', workspace_info_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(workspace_info_msg))
+            
+            # Validate dataset structure
+            coco_file = os.path.join(dataset_path, "annotations.json")
+            images_dir = os.path.join(dataset_path, "images")
+            
+            if not os.path.exists(coco_file):
+                error_msg = f"❌ COCO file not found: {coco_file}"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                return False
+            
+            if not os.path.exists(images_dir):
+                error_msg = f"❌ Images directory not found: {images_dir}"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                return False
+            
+            # Load COCO data for reporting
+            with open(coco_file, 'r') as f:
+                coco_data = json.load(f)
+            
+            images_data = coco_data.get('images', [])
+            annotations_data = coco_data.get('annotations', [])
+            categories_data = coco_data.get('categories', [])
+            
+            total_images = len(images_data)
+            total_annotations = len(annotations_data)
+            
+            summary_msg = f"📂 Starting bulk upload of {total_images} images with {total_annotations} annotations..."
+            categories_msg = f"📈 Categories: {len(categories_data)} ({', '.join([cat['name'] for cat in categories_data])})"
+            api_msg = "🌐 Using workspace.upload_dataset() method"
+            separator_msg = "-" * 50
+            
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', summary_msg))
+                self.upload_queue.put(('progress', categories_msg))
+                self.upload_queue.put(('progress', api_msg))
+                self.upload_queue.put(('progress', separator_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(summary_msg))
+                self.after(0, lambda: self.log_rf_status(categories_msg))
+                self.after(0, lambda: self.log_rf_status(api_msg))
+                self.after(0, lambda: self.log_rf_status(separator_msg))
+            
+            # Start the actual upload
+            upload_msg = f"🚀 Uploading dataset to project: {project_id}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', upload_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(upload_msg))
+            
+            # Upload dataset using workspace.upload_dataset()
+            result = workspace.upload_dataset(
+                dataset_path,  # Path to the dataset directory
+                project_id,    # Project ID to upload to
+                num_workers=10,  # Number of parallel workers
+                project_license="MIT",
+                project_type="object-detection",
+                batch_name=None,
+                num_retries=2
+            )
+            
+            # Check result
+            if result:
+                success_msg = "✅ Workspace upload completed successfully!"
+                result_msg = f"📊 Upload result: {result}"
+                
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', success_msg))
+                    self.upload_queue.put(('progress', result_msg))
+                else:
+                    self.after(0, lambda: self.log_rf_status(success_msg))
+                    self.after(0, lambda: self.log_rf_status(result_msg))
+                
+                return True
+            else:
+                error_msg = "❌ Workspace upload failed"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                return False
+                
+        except Exception as e:
+            error_msg = f"❌ Workspace upload error: {str(e)}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', error_msg))
+            else:
+                self.after(0, lambda msg=error_msg: self.log_rf_status(msg))
+            return False
 
     def handle_upload_complete(self, success):
         """Handle upload completion"""
@@ -4881,6 +5941,252 @@ This dataset is ready for upload to Roboflow!"""
             self.upload_queue.put(('progress', f"❌ Upload failed: {str(e)}"))
             return False
     
+    def upload_dataset_to_roboflow_with_annotations(self, coco_file, api_key, project_id):
+        """Upload dataset with annotations to Roboflow using individual upload method"""
+        try:
+            # Import required modules
+            try:
+                from roboflow import Roboflow
+                import tempfile
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', "✅ Roboflow library loaded"))
+                else:
+                    self.after(0, lambda: self.log_rf_status("✅ Roboflow library loaded"))
+            except ImportError:
+                error_msg = "❌ Roboflow library not found. Please install: pip install roboflow"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                else:
+                    self.after(0, lambda: self.log_rf_status(error_msg))
+                return False
+            
+            # Initialize Roboflow
+            progress_msg = "🔄 Initializing Roboflow connection..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', progress_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(progress_msg))
+            
+            rf = Roboflow(api_key=api_key)
+            workspace = rf.workspace()
+            project = workspace.project(project_id)
+            
+            workspace_info = f"   Workspace: {getattr(workspace, 'name', 'Unknown')}"
+            project_info = f"   Project: {getattr(project, 'name', project_id)}"
+            project_type_info = f"   Type: {getattr(project, 'type', 'Unknown')}"
+            
+            success_msg = "✅ Connected to Roboflow project"
+            upload_msg = "📋 Upload Mode: Predictions (images will go to 'Unassigned' for review)"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', success_msg))
+                self.upload_queue.put(('progress', workspace_info))
+                self.upload_queue.put(('progress', project_info))
+                self.upload_queue.put(('progress', project_type_info))
+                self.upload_queue.put(('progress', upload_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(success_msg))
+                self.after(0, lambda: self.log_rf_status(workspace_info))
+                self.after(0, lambda: self.log_rf_status(project_info))
+                self.after(0, lambda: self.log_rf_status(project_type_info))
+                self.after(0, lambda: self.log_rf_status(upload_msg))
+            
+            # Load COCO data
+            load_msg = "📄 Loading COCO annotations..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', load_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(load_msg))
+            
+            import json
+            with open(coco_file, 'r') as f:
+                coco_data = json.load(f)
+            
+            images_data = coco_data.get('images', [])
+            annotations_data = coco_data.get('annotations', [])
+            categories_data = coco_data.get('categories', [])
+            info_data = coco_data.get('info', {})
+            
+            total_images = len(images_data)
+            total_annotations = len(annotations_data)
+            
+            summary_msg = f"📂 Starting upload of {total_images} images with {total_annotations} annotations..."
+            categories_msg = f"📈 Categories: {len(categories_data)} ({', '.join([cat['name'] for cat in categories_data])})"
+            separator_msg = "-" * 50
+            
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', summary_msg))
+                self.upload_queue.put(('progress', categories_msg))
+                self.upload_queue.put(('progress', separator_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(summary_msg))
+                self.after(0, lambda: self.log_rf_status(categories_msg))
+                self.after(0, lambda: self.log_rf_status(separator_msg))
+            
+            if not images_data:
+                error_msg = "❌ No images found in COCO file"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                else:
+                    self.after(0, lambda: self.log_rf_status(error_msg))
+                return False
+            
+            # Upload images with annotations
+            successful_uploads = 0
+            failed_uploads = 0
+            
+            for i, image_info in enumerate(images_data, 1):
+                try:
+                    # Get image path
+                    if 'file_path' in image_info and os.path.exists(image_info['file_path']):
+                        image_path = image_info['file_path']
+                    elif 'path' in image_info and os.path.exists(image_info['path']):
+                        image_path = image_info['path']
+                    else:
+                        # Fallback: construct from images folder
+                        dataset_dir = os.path.dirname(coco_file)
+                        images_dir = os.path.join(dataset_dir, "images")
+                        image_path = os.path.join(images_dir, image_info['file_name'])
+                    
+                    filename = image_info['file_name']
+                    
+                    # Progress update every 5 images or at the end
+                    if i % 5 == 0 or i == total_images:
+                        progress_pct = (i / total_images) * 100
+                        progress_msg = f"📈 Progress: {progress_pct:.1f}% ({i}/{total_images})"
+                        if hasattr(self, 'upload_queue'):
+                            self.upload_queue.put(('progress', progress_msg))
+                        else:
+                            self.after(0, lambda msg=progress_msg: self.log_rf_status(msg))
+                    
+                    if not os.path.exists(image_path):
+                        fail_msg = f"❌ Missing: {filename}"
+                        if hasattr(self, 'upload_queue'):
+                            self.upload_queue.put(('progress', fail_msg))
+                        else:
+                            self.after(0, lambda msg=fail_msg: self.log_rf_status(msg))
+                        failed_uploads += 1
+                        continue
+                    
+                    # Get annotations for this specific image only
+                    image_annotations = [
+                        ann for ann in annotations_data 
+                        if ann['image_id'] == image_info['id']
+                    ]
+                    
+                    # Create minimal COCO file for this image only
+                    mini_coco = {
+                        "info": info_data,
+                        "images": [image_info],
+                        "annotations": image_annotations,
+                        "categories": categories_data
+                    }
+                    
+                    # Create temporary file with minimal COCO data
+                    temp_coco_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                            json.dump(mini_coco, temp_file)
+                            temp_coco_path = temp_file.name
+                        
+                        # Upload as predictions to appear in "Unassigned" section
+                        response = project.single_upload(
+                            image_path=image_path,
+                            annotation_path=temp_coco_path,  # COCO annotations
+                            is_prediction=True,  # Upload as predictions to go to "Unassigned"
+                            num_retry_uploads=1
+                        )
+                        
+                        successful_uploads += 1
+                        
+                        # Log every successful upload with annotation count and response info
+                        ann_count = len(image_annotations)
+                        success_msg = f"✅ Uploaded: {filename} ({ann_count} annotations)"
+                        if response:
+                            response_info = f"   Response: {str(response)[:100]}..."
+                            if hasattr(self, 'upload_queue'):
+                                self.upload_queue.put(('progress', success_msg))
+                                self.upload_queue.put(('progress', response_info))
+                            else:
+                                self.after(0, lambda msg=success_msg: self.log_rf_status(msg))
+                                self.after(0, lambda msg=response_info: self.log_rf_status(msg))
+                        else:
+                            if hasattr(self, 'upload_queue'):
+                                self.upload_queue.put(('progress', success_msg))
+                            else:
+                                self.after(0, lambda msg=success_msg: self.log_rf_status(msg))
+                        
+                    except Exception as upload_error:
+                        failed_uploads += 1
+                        error_details = str(upload_error)
+                        error_msg = f"❌ Failed: {filename} - {error_details[:150]}..."
+                        debug_msg = f"   Error type: {type(upload_error).__name__}"
+                        if hasattr(self, 'upload_queue'):
+                            self.upload_queue.put(('progress', error_msg))
+                            self.upload_queue.put(('progress', debug_msg))
+                        else:
+                            self.after(0, lambda msg=error_msg: self.log_rf_status(msg))
+                            self.after(0, lambda msg=debug_msg: self.log_rf_status(msg))
+                    
+                    finally:
+                        # Clean up temporary file
+                        if temp_coco_path and os.path.exists(temp_coco_path):
+                            try:
+                                os.unlink(temp_coco_path)
+                            except:
+                                pass
+                    
+                except Exception as e:
+                    failed_uploads += 1
+                    error_msg = f"❌ Error processing {image_info.get('file_name', 'unknown')}: {str(e)[:100]}..."
+                    if hasattr(self, 'upload_queue'):
+                        self.upload_queue.put(('progress', error_msg))
+                    else:
+                        self.after(0, lambda msg=error_msg: self.log_rf_status(msg))
+            
+            # Final summary
+            separator_msg = "-" * 50
+            complete_msg = "🎉 Upload Complete!"
+            success_count_msg = f"   ✅ Successful: {successful_uploads}"
+            failed_count_msg = f"   ❌ Failed: {failed_uploads}"
+            total_msg = f"   📊 Total: {total_images}"
+            destination_msg = f"   📁 Destination: Unassigned section (predictions for review)"
+            
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', separator_msg))
+                self.upload_queue.put(('progress', complete_msg))
+                self.upload_queue.put(('progress', success_count_msg))
+                self.upload_queue.put(('progress', failed_count_msg))
+                self.upload_queue.put(('progress', total_msg))
+                self.upload_queue.put(('progress', destination_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(separator_msg))
+                self.after(0, lambda: self.log_rf_status(complete_msg))
+                self.after(0, lambda: self.log_rf_status(success_count_msg))
+                self.after(0, lambda: self.log_rf_status(failed_count_msg))
+                self.after(0, lambda: self.log_rf_status(total_msg))
+                self.after(0, lambda: self.log_rf_status(destination_msg))
+            
+            if successful_uploads > 0:
+                final_success_msg = "🎉 Upload to Unassigned completed successfully!"
+                final_note_msg = "📋 Images uploaded as predictions - check 'Unassigned' section in Roboflow"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', final_success_msg))
+                    self.upload_queue.put(('progress', final_note_msg))
+                else:
+                    self.after(0, lambda: self.log_rf_status(final_success_msg))
+                    self.after(0, lambda: self.log_rf_status(final_note_msg))
+                return True
+            else:
+                return False
+            
+        except Exception as e:
+            error_msg = f"❌ Annotation upload failed: {str(e)}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', error_msg))
+            else:
+                self.after(0, lambda msg=error_msg: self.log_rf_status(msg))
+            return False
+
     def perform_roboflow_upload(self, coco_file, api_key, workspace_id, project_id):
         """Optimized Roboflow upload with minimal COCO files per image"""
         try:

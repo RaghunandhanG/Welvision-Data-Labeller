@@ -928,6 +928,13 @@ class YOLOLabelerApp(tk.Tk):
                                       padx=15, pady=10, state="disabled")
         self.rf_cancel_btn.pack(side=tk.LEFT)
         
+        # Cancellation info
+        cancellation_info = tk.Label(step4_frame, 
+                                    text="ℹ️ Small datasets (≤50 images): Full cancellation support\n"
+                                         "Large datasets (>50 images): Limited cancellation (bulk upload)", 
+                                    font=("Arial", 9), fg="#666666", bg=APP_BG_COLOR, justify=tk.LEFT)
+        cancellation_info.pack(pady=(5, 0))
+        
         # Upload info
         upload_info = tk.Label(step4_frame, text="Dataset will be uploaded using workspace.upload_dataset() - bulk upload with annotations", 
                               font=("Arial", 9), fg="#ffcc00", bg=APP_BG_COLOR)
@@ -4451,14 +4458,32 @@ This dataset is ready for upload to Roboflow!"""
         """Handle application closing"""
         # Check if upload is in progress
         if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
-            if messagebox.askyesno("Upload in Progress", 
-                                 "A Roboflow upload is currently in progress.\n\n"
-                                 "Do you want to cancel the upload and close the application?\n\n"
-                                 "Note: Canceling may result in incomplete data upload."):
-                # Cancel the upload
+            response = messagebox.askyesnocancel("Upload in Progress", 
+                                               "A Roboflow upload is currently in progress.\n\n"
+                                               "• Click 'Yes' to cancel upload and close application\n"
+                                               "• Click 'No' to force close immediately (may leave upload running)\n"
+                                               "• Click 'Cancel' to keep application open\n\n"
+                                               "Note: Large bulk uploads cannot be stopped once started.")
+            
+            if response is True:  # Yes - Cancel upload and close
                 self.cancel_upload()
-                self.destroy()
-            # If user chooses not to close, do nothing (keep app open)
+                # Give a moment for cancellation to process
+                self.after(1000, self.destroy)
+            elif response is False:  # No - Force close immediately
+                if messagebox.askokcancel("Force Close", 
+                                        "Are you sure you want to force close?\n\n"
+                                        "This may leave the upload process running in the background."):
+                    # Force close without waiting for upload to finish
+                    try:
+                        import os
+                        import signal
+                        # Try to terminate gracefully first
+                        self.destroy()
+                        # If that doesn't work, force terminate
+                        os._exit(0)
+                    except:
+                        self.destroy()
+            # If Cancel (None), do nothing - keep app open
         else:
             # No upload in progress, normal close confirmation
             if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
@@ -5530,6 +5555,26 @@ This dataset is ready for upload to Roboflow!"""
             else:
                 self.after(0, lambda: self.log_rf_status(upload_msg))
             
+            # For better cancellation support, use individual upload for smaller datasets
+            # Bulk upload (workspace.upload_dataset) cannot be cancelled once started
+            if total_images <= 50:  # Use individual upload for datasets with 50 or fewer images
+                individual_msg = f"📦 Using individual upload method for better cancellation support ({total_images} images)"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', individual_msg))
+                else:
+                    self.after(0, lambda: self.log_rf_status(individual_msg))
+                
+                # Switch to individual upload method which supports cancellation
+                coco_file = os.path.join(dataset_path, "annotations.json")
+                return self.upload_dataset_with_individual_cancellation(coco_file, api_key, project_id, annotation_labelmap)
+            
+            # For large datasets, warn user about cancellation limitations
+            bulk_warning_msg = f"⚠️ Using bulk upload for large dataset ({total_images} images). Cancellation limited once upload starts."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', bulk_warning_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(bulk_warning_msg))
+            
             # Upload dataset using workspace.upload_dataset() with annotation_labelmap - MAIN FIX!
             try:
                 # Check for cancellation before main upload
@@ -5542,18 +5587,18 @@ This dataset is ready for upload to Roboflow!"""
                 result = workspace.upload_dataset(
                     dataset_path,  # Path to the dataset directory
                     project_id,    # Project ID to upload to
-                    num_workers=8,  # Reduced workers for stability
+                    num_workers=4,  # Reduced workers for better control
                     project_license="MIT",
                     project_type="object-detection",
                     batch_name=None,
-                    num_retries=3,  # Increased retries
+                    num_retries=1,  # Reduced retries for faster cancellation
                     annotation_labelmap=annotation_labelmap  # KEY FIX: Map category IDs to names
                 )
                 
                 # Check for cancellation after upload
                 if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
                     if hasattr(self, 'upload_queue'):
-                        self.upload_queue.put(('progress', "🛑 Upload cancelled by user"))
+                        self.upload_queue.put(('progress', "🛑 Upload cancelled by user (upload may have completed)"))
                     return False
                 
                 labelmap_msg = "✅ Upload successful with annotation_labelmap parameter"
@@ -5606,6 +5651,115 @@ This dataset is ready for upload to Roboflow!"""
                 self.upload_queue.put(('progress', error_msg))
             else:
                 self.after(0, lambda msg=error_msg: self.log_rf_status(msg))
+            return False
+
+    def upload_dataset_with_individual_cancellation(self, coco_file, api_key, project_id, annotation_labelmap):
+        """Upload dataset using individual file uploads with proper cancellation support"""
+        try:
+            import roboflow
+            import json
+            import os
+            from PIL import Image
+            
+            # Initialize Roboflow
+            rf = roboflow.Roboflow(api_key=api_key)
+            workspace = rf.workspace()
+            project = workspace.project(project_id)
+            
+            # Load COCO data
+            with open(coco_file, 'r') as f:
+                coco_data = json.load(f)
+            
+            images_data = coco_data.get('images', [])
+            annotations_data = coco_data.get('annotations', [])
+            categories_data = coco_data.get('categories', [])
+            
+            total_images = len(images_data)
+            dataset_dir = os.path.dirname(coco_file)
+            images_dir = os.path.join(dataset_dir, "images")
+            
+            # Create annotation mapping for each image
+            image_annotations = {}
+            for ann in annotations_data:
+                img_id = ann.get('image_id')
+                if img_id not in image_annotations:
+                    image_annotations[img_id] = []
+                image_annotations[img_id].append(ann)
+            
+            upload_msg = f"📤 Starting individual upload of {total_images} images with cancellation support..."
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', upload_msg))
+            
+            uploaded_count = 0
+            
+            # Upload images one by one
+            for i, img_data in enumerate(images_data):
+                # Check for cancellation before each image
+                if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                    cancel_msg = f"🛑 Upload cancelled by user after {uploaded_count}/{total_images} images"
+                    if hasattr(self, 'upload_queue'):
+                        self.upload_queue.put(('progress', cancel_msg))
+                    return False
+                
+                img_filename = img_data.get('file_name', '')
+                img_id = img_data.get('id')
+                img_path = os.path.join(images_dir, img_filename)
+                
+                if not os.path.exists(img_path):
+                    continue
+                
+                # Progress message
+                progress_msg = f"📤 Uploading {i+1}/{total_images}: {img_filename}"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', progress_msg))
+                
+                try:
+                    # Get annotations for this image
+                    img_annotations = image_annotations.get(img_id, [])
+                    
+                    # Upload image with or without annotations
+                    if img_annotations:
+                        # Convert annotations to the format expected by Roboflow
+                        project.upload(
+                            image_path=img_path,
+                            annotation_labelmap=annotation_labelmap,
+                            hosted_image=False,
+                            split="train"
+                        )
+                    else:
+                        # Upload image without annotations
+                        project.upload(
+                            image_path=img_path,
+                            hosted_image=False,
+                            split="train"
+                        )
+                    
+                    uploaded_count += 1
+                    
+                    # Check for cancellation after each upload
+                    if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                        cancel_msg = f"🛑 Upload cancelled by user after {uploaded_count}/{total_images} images"
+                        if hasattr(self, 'upload_queue'):
+                            self.upload_queue.put(('progress', cancel_msg))
+                        return False
+                    
+                except Exception as e:
+                    error_msg = f"⚠️ Failed to upload {img_filename}: {str(e)}"
+                    if hasattr(self, 'upload_queue'):
+                        self.upload_queue.put(('progress', error_msg))
+                    continue
+            
+            # Final success message
+            success_msg = f"✅ Individual upload completed: {uploaded_count}/{total_images} images uploaded"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', success_msg))
+            
+            return True
+            
+        except Exception as e:
+            error_msg = f"❌ Individual upload error: {str(e)}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', error_msg))
             return False
 
     def handle_upload_complete(self, success):

@@ -1,103 +1,615 @@
 # WelVision Data Labeller
 
-A comprehensive Tkinter application for automated image labeling using YOLO v8 models with MySQL database integration and enhanced features.
+A comprehensive computer vision data labelling application that combines YOLO model inference with seamless Roboflow integration. Create, label, and upload datasets with an intuitive workflow designed for efficiency and professional results.
 
-## ✨ Enhanced Features
+## 🎯 Application Overview
 
-### Core Features
-- **Interactive Confidence Control**: Real-time slider to adjust YOLO confidence threshold
-- **Simplified Settings**: Streamlined YOLO configuration without complex IOU settings
-- **Roller Class Filtering**: Only processes images that contain "roller" class detections
-- **Smart Image Rejection**: Automatically skips images without the required "roller" class
-- **Two-Panel Layout**: Controls on left (60%), image preview on right (40%)
-- **Image Preview Panel**: 2-column grid of larger thumbnails (160×120px) with file info
-- **Full-Width Interface**: Utilizes 90% of screen width for optimal workspace
-- **Smart Device Detection**: Automatic GPU/CPU detection with fallback support
-- **Scrollable Interface**: Full application scrolling with mouse wheel support
-- **Model Management**: Load YOLO models from database or add new models from filesystem
-- **Dataset Management**: Create new datasets or add to existing ones with custom save locations
-- **Batch Image Processing**: Upload individual images or entire folders
-- **Automated Labeling**: Generate YOLO format labels automatically
-- **Database Integration**: Store and manage both models and datasets in MySQL
-- **Status Updates**: Real-time status updates during processing
-- **WelVision Styling**: Professional dark theme interface
-- **🆕 Roboflow Project Creation**: Create new Roboflow projects directly from the app
-- **🆕 Enhanced GPU/CPU Support**: Comprehensive device detection and automatic fallback
-- **🆕 Real-time Device Monitoring**: Live GPU memory usage and device status display
+The WelVision Data Labeller streamlines the complete computer vision workflow from image annotation to dataset deployment. Whether you're creating training data for object detection, managing datasets, or uploading to Roboflow for model training, this application provides a unified interface for all your data labelling needs.
 
-### Latest Updates
-- ✅ **Simplified Interface**: Removed progress bar for cleaner, streamlined experience
-- ✅ **Interactive Confidence Slider**: Real-time confidence threshold adjustment (0.01-0.95)
-- ✅ **Simplified YOLO Settings**: Removed IOU threshold, focused on confidence control
-- ✅ **Roller Class Filtering**: Only processes images containing "roller" class detections
-- ✅ **Smart Image Rejection**: Automatically rejects images without roller class
-- ✅ **Enhanced Image Preview**: 2-column grid layout with larger thumbnails (160×120px)
-- ✅ **Optimized Layout**: Controls on left (60%), image previews on right (40%)
-- ✅ **Image Preview Panel**: Right-side panel showing thumbnails of uploaded images
-- ✅ **Smart Database Management**: Auto-creates database and tables if not exists
-- ✅ **Available Models Only**: Shows only models with existing files in dropdown
-- ✅ **Database Settings UI**: Configure MySQL credentials from within the app
-- ✅ **AI Models Table**: Renamed to `ai_models` for better organization
-- ✅ **Full-Width Layout**: Utilizes 90% of screen width for better workspace
-- ✅ **Smart Device Detection**: Auto-detects GPU/CPU with intelligent fallback
-- ✅ **Streamlined Title**: Clean "WelVision Data Labeller" branding
-- ✅ **Consistent UI**: Standardized button sizes and layout
-- ✅ **Scrollable Interface**: Navigate through content with scrollbars
-- ✅ **Dataset Dropdown**: Select from existing datasets with image counts
-- ✅ **Model Loading**: Browse and add new YOLO models (.pt, .pth, .onnx)
-- ✅ **Folder Upload**: Upload entire directories of images
-- ✅ **Custom Dataset Location**: Choose where to save datasets with folder browser
-- ✅ **Enhanced Database**: Separate tables for models and datasets
+### Key Capabilities
+- **🤖 Automated Labeling**: Use pre-trained YOLO models to automatically generate annotations
+- **🗄️ Database Management**: Store and organize models and datasets in MySQL
+- **☁️ Roboflow Integration**: Create projects and upload datasets directly to Roboflow
+- **📊 Smart Upload Control**: Intelligent upload methods with cancellation support
+- **🎨 Professional Interface**: Clean, intuitive UI with real-time progress tracking
 
-## Prerequisites
+---
 
-- Python 3.8 or higher
-- MySQL Server
-- YOLO v8 models (`.pt`, `.pth`, or `.onnx` files)
+## 📋 Complete Application Workflow
 
-## Installation
+### Phase 1: Initial Setup & Configuration
 
-1. **Clone or download the application files**
-
-2. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Configure database connection**:
-   - Update `config.py` with your MySQL credentials:
-   ```python
-   DATABASE_CONFIG = {
-       'host': 'localhost',
-       'user': 'root',
-       'password': 'your_mysql_password',  # ⚠️ UPDATE THIS
-       'database': 'welvision_db',
-       'port': 3306
-   }
-   ```
-
-4. **Database Setup**:
-   
-   **Option 1 - Use Configuration Tool (Recommended):**
-   ```bash
-   python db_settings_standalone.py
-   ```
-   Or double-click `configure_database.bat` on Windows.
-   
-   **Option 2 - Automatic Setup:**
-   The app will automatically create the database and tables on first run.
-   
-   **Option 3 - Manual Setup:**
-   ```bash
-   python setup_database.py
-   ```
-
-## Usage
-
-### 1. Start the Application
+#### Step 1.1: Database Configuration
 ```bash
+# Start the application
 python yolo_labeler_app.py
+
+# First-time setup: Configure database
+# Click "DB Settings" in the main interface
 ```
+
+**What happens here:**
+- Configure MySQL connection settings
+- Create database and required tables automatically
+- Test connection and verify setup
+
+#### Step 1.2: System Verification
+**Automatic Process:**
+- GPU/CPU detection and optimization
+- YOLO dependencies verification
+- Roboflow SDK availability check
+
+---
+
+### Phase 2: Model Management
+
+#### Step 2.1: Load or Add YOLO Models
+
+**Option A: Use Existing Model**
+1. **Select Model**: Choose from the "Select Model" dropdown
+2. **Load Model**: Click "🔄 Load Selected Model"
+3. **Verification**: Wait for "✅ Model loaded successfully" message
+
+**Option B: Add New Model**
+1. **Browse**: Click "📁 Browse Model File"
+2. **Select**: Choose your YOLO model file (.pt, .pth, .onnx)
+3. **Add**: Click "➕ Add to Database"
+4. **Load**: Select and load the newly added model
+
+**Workflow Result:** ✅ YOLO model is ready for inference
+
+---
+
+### Phase 3: Dataset Preparation
+
+#### Step 3.1: Create or Select Dataset
+
+**Option A: Create New Dataset**
+1. **Select**: Choose "🆕 Create New Dataset" radio button
+2. **Name**: Enter descriptive dataset name (e.g., "factory_inspection_v1")
+3. **Location**: Click "📁 Browse Folder" to choose save location
+4. **Confirm**: Dataset structure is created automatically
+
+**Option B: Add to Existing Dataset**
+1. **Select**: Choose "📂 Add to Existing Dataset" radio button
+2. **Choose**: Select dataset from dropdown (shows image counts)
+3. **Confirm**: Ready to add more images to existing dataset
+
+#### Step 3.2: Upload Images
+
+**Method A: Individual Images**
+```
+Click "📤 Upload Individual Images"
+→ Multi-select images (Ctrl+click)
+→ Supported: JPG, JPEG, PNG, BMP, TIFF
+→ Images appear in preview panel
+```
+
+**Method B: Folder Upload**
+```
+Click "📁 Upload Image Folder"
+→ Select directory containing images
+→ Recursive scanning of subdirectories
+→ All valid images loaded automatically
+```
+
+**Workflow Result:** ✅ Images are uploaded and ready for labeling
+
+---
+
+### Phase 4: Automated Labeling
+
+#### Step 4.1: Configure Detection Parameters
+1. **Confidence Threshold**: Adjust slider (0.01 - 0.95)
+   - Higher values = fewer, more confident detections
+   - Lower values = more detections, potentially less accurate
+2. **Model Settings**: Verify loaded model and device (GPU/CPU)
+
+#### Step 4.2: Start Labeling Process
+```
+Click "🚀 Start Labeling"
+```
+
+**What happens during labeling:**
+1. **Image Processing**: Each image is analyzed by YOLO model
+2. **Detection Generation**: Bounding boxes and class predictions created
+3. **Format Conversion**: Annotations saved in YOLO format (.txt files)
+4. **Progress Tracking**: Real-time updates and statistics
+5. **Quality Control**: Only processes images meeting confidence criteria
+
+**Output Structure:**
+```
+datasets/your_dataset_name/
+├── images/           # Original images
+│   ├── image001.jpg
+│   ├── image002.jpg
+│   └── ...
+└── labels/           # YOLO format annotations
+    ├── image001.txt
+    ├── image002.txt
+    └── ...
+```
+
+**Workflow Result:** ✅ Dataset with images and annotations is ready
+
+---
+
+### Phase 5: Roboflow Integration
+
+#### Step 5.1: Setup Roboflow Connection
+1. **Navigate**: Click "☁️ Roboflow Projects" tab
+2. **API Key**: Enter your Roboflow API key
+3. **Connect**: Click "🔍 Test API & Load Projects"
+4. **Verification**: See list of existing projects
+
+#### Step 5.2: Create New Project (Optional)
+```
+Enter Project Details:
+├── Project Name: "Factory Defect Detection"
+├── Project Type: Object Detection
+├── License: Private/MIT/CC BY 4.0/Public Domain
+└── Click "🆕 Create New Project"
+```
+
+#### Step 5.3: Upload Dataset to Roboflow
+
+**Step 5.3.1: Select Target Project**
+- Choose from dropdown of existing projects
+- Newly created projects appear automatically
+
+**Step 5.3.2: Choose Dataset**
+- Select dataset from "Choose Dataset" dropdown
+- Only datasets with COCO format annotations shown
+
+**Step 5.3.3: Initiate Upload**
+```
+Click "🚀 Upload Dataset to Roboflow"
+```
+
+**Smart Upload Process:**
+- **Small Datasets (≤50 images)**: Individual upload with full cancellation support
+- **Large Datasets (>50 images)**: Bulk upload with optimization warnings
+- **Progress Monitoring**: Real-time upload status and file counts
+- **Error Handling**: Automatic retries and detailed error messages
+
+**Workflow Result:** ✅ Dataset is uploaded to Roboflow and ready for training
+
+---
+
+### Phase 6: Upload Management & Control
+
+#### Step 6.1: Monitor Upload Progress
+- **Real-time Status**: Live progress updates in status panel
+- **File Tracking**: Current file being uploaded
+- **Success Metrics**: Uploaded vs total file counts
+
+#### Step 6.2: Upload Cancellation (if needed)
+
+**During Upload:**
+- **Cancel Button**: Click "🛑 Cancel Upload" for graceful stopping
+- **Force Close**: Options when closing app during upload
+
+**Cancellation Behavior:**
+- **Small Datasets**: Immediate cancellation between file uploads
+- **Large Datasets**: Limited cancellation (bulk upload constraints)
+- **Clean Exit**: No orphaned processes or corrupted data
+
+---
+
+## 🔄 Typical Workflow Examples
+
+### Example 1: New Project from Scratch
+```
+1. Setup → Database Configuration
+2. Models → Add new YOLO model → Load model
+3. Dataset → Create new dataset "quality_control_v1"
+4. Upload → Upload folder of 200 factory images
+5. Label → Start labeling with 0.5 confidence
+6. Roboflow → Create project "QC Detection"
+7. Upload → Upload dataset to Roboflow
+8. Result → Ready for model training in Roboflow
+```
+
+### Example 2: Expanding Existing Dataset
+```
+1. Models → Load existing model from database
+2. Dataset → Add to existing "quality_control_v1"
+3. Upload → Add 50 more images to dataset
+4. Label → Process new images only
+5. Roboflow → Upload updated dataset
+6. Result → Enhanced dataset with more training data
+```
+
+### Example 3: Multiple Dataset Management
+```
+1. Create dataset "defects_batch1" → Process 100 images
+2. Create dataset "defects_batch2" → Process 150 images
+3. Upload both datasets to different Roboflow projects
+4. Compare results and annotation quality
+5. Merge best practices for future datasets
+```
+
+---
+
+## 🎛️ Interface Navigation Guide
+
+### Main Tabs
+1. **📊 Main Labeling**: Core labeling functionality
+2. **☁️ Roboflow Projects**: Project creation and dataset upload
+
+### Main Labeling Tab Sections
+1. **🤖 Model Management**
+   - Model selection dropdown
+   - Load/add model controls
+   - Model status display
+
+2. **📁 Dataset Management**
+   - New vs existing dataset options
+   - Dataset name input and location selection
+   - Existing dataset dropdown with counts
+
+3. **📤 Image Upload**
+   - Individual image upload button
+   - Folder upload button
+   - Image preview panel (right side)
+
+4. **⚙️ Labeling Controls**
+   - Confidence threshold slider
+   - Start labeling button
+   - Progress and status display
+
+5. **🔧 Settings & Actions**
+   - Database settings
+   - Clear all function
+   - Status and device information
+
+### Roboflow Tab Sections
+1. **🔑 API Configuration**
+   - API key input
+   - Connection testing
+   - Project loading
+
+2. **🆕 Project Creation**
+   - Project details form
+   - Type and license selection
+   - Creation controls
+
+3. **📤 Dataset Upload**
+   - Project selection
+   - Dataset selection
+   - Upload controls and progress
+
+---
+
+## 📊 Status Indicators & Feedback
+
+### Visual Feedback System
+- **🟢 Green**: Success states and completed operations
+- **🟡 Yellow**: Warning states and in-progress operations
+- **🔴 Red**: Error states and failed operations
+- **🔵 Blue**: Information and neutral states
+
+### Status Messages
+- **Model Status**: "✅ Model loaded: yolov8n.pt (GPU)"
+- **Dataset Status**: "📁 Dataset: factory_v1 (125 images)"
+- **Upload Status**: "📤 Uploading 5/50: image_batch_001.jpg"
+- **Completion Status**: "🎉 Dataset uploaded successfully to Roboflow!"
+
+### Progress Tracking
+- **Real-time Updates**: Live progress for all operations
+- **File Counts**: Current/total for batch operations
+- **Time Estimates**: Automatic calculation for long operations
+- **Error Reporting**: Detailed messages for troubleshooting
+
+---
+
+## 🔧 Advanced Features
+
+### Smart Device Management
+- **Automatic Detection**: GPU/CPU capabilities assessed on startup
+- **Intelligent Fallback**: Automatic CPU fallback if GPU issues occur
+- **Performance Optimization**: Device-specific settings applied automatically
+
+### Database Integration
+- **Model Storage**: Persistent model registry with metadata
+- **Dataset Tracking**: Image counts and creation timestamps
+- **Settings Persistence**: Configuration stored across sessions
+
+### Error Recovery
+- **Graceful Degradation**: Application continues working if components fail
+- **Automatic Retries**: Network operations retry with exponential backoff
+- **Clean Shutdown**: Proper cleanup of resources and processes
+
+---
+
+## 🚀 Getting Started Quick Guide
+
+### 1. First Time Setup (5 minutes)
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Start application
+python yolo_labeler_app.py
+
+# Configure database (click "DB Settings")
+# Add your first YOLO model
+# Create your first dataset
+```
+
+### 2. Your First Dataset (10 minutes)
+```bash
+# Load a model → Upload 10-20 test images
+# Adjust confidence to 0.5 → Start labeling
+# Check generated annotations in datasets folder
+# Verify quality and adjust parameters if needed
+```
+
+### 3. Roboflow Integration (5 minutes)
+```bash
+# Get API key from Roboflow dashboard
+# Switch to Roboflow tab → Enter API key
+# Create test project → Upload your dataset
+# Verify upload in Roboflow dashboard
+```
+
+**Total time to full workflow: ~20 minutes**
+
+---
+
+## 📁 Project Structure & Output
+
+### Application Files
+```
+WELVISION DATA LABELLER/
+├── 📄 yolo_labeler_app.py      # Main application
+├── 📄 config.py                # Configuration settings
+├── 📄 database_manager.py      # Database operations
+├── 📄 dataset_manager.py       # Dataset handling
+├── 📄 roboflow_manager.py      # Roboflow integration
+├── 📄 yolo_model_manager.py    # Model management
+├── 📄 requirements.txt         # Dependencies
+├── 📄 README.md               # This documentation
+└── 📁 datasets/               # Generated datasets
+```
+
+### Generated Dataset Structure
+```
+datasets/your_dataset_name/
+├── 📁 images/                 # Original images
+│   ├── 🖼️ frame_001.jpg
+│   ├── 🖼️ frame_002.jpg
+│   └── 🖼️ ...
+├── 📁 labels/                 # YOLO annotations
+│   ├── 📄 frame_001.txt
+│   ├── 📄 frame_002.txt
+│   └── 📄 ...
+├── 📄 classes.json           # Class mapping
+├── 📄 data.yaml             # YOLO dataset config
+└── 📄 annotations.json      # COCO format (for Roboflow)
+```
+
+This workflow ensures a seamless transition from raw images to production-ready datasets, making the WelVision Data Labeller your complete solution for computer vision data preparation.
+
+---
+
+## 🛠️ Installation & Setup
+
+### Prerequisites
+- **Python 3.8+**: Download from [python.org](https://python.org)
+- **MySQL Server**: Required for data persistence
+- **YOLO Models**: Pre-trained models (.pt, .pth, .onnx files)
+
+### Quick Installation
+```bash
+# 1. Install Python dependencies
+pip install -r requirements.txt
+
+# 2. Start application
+python yolo_labeler_app.py
+
+# 3. Configure database on first run
+# Click "DB Settings" → Enter MySQL credentials → Test connection
+```
+
+### Manual Database Setup (Optional)
+```python
+# Update config.py with your MySQL settings
+DATABASE_CONFIG = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'your_mysql_password',
+    'database': 'welvision_db',
+    'port': 3306
+}
+```
+
+---
+
+## 📋 Technical Specifications
+
+### Supported File Formats
+- **Images**: JPG, JPEG, PNG, BMP, TIFF
+- **Models**: .pt (PyTorch), .pth (PyTorch), .onnx (ONNX)
+- **Output**: YOLO format (.txt), COCO JSON format
+
+### System Requirements
+- **RAM**: 4GB minimum, 8GB+ recommended
+- **Storage**: 500MB for application, varies by dataset size
+- **GPU**: Optional but recommended (CUDA-compatible)
+- **OS**: Windows 10+, macOS 10.14+, Ubuntu 18.04+
+
+### Performance Specifications
+- **Processing Speed**: 1-5 images/second (depends on model and device)
+- **Batch Size**: Up to 1000 images per session
+- **Upload Speed**: Varies by network (Roboflow uploads)
+- **Memory Usage**: ~500MB base + model size + image cache
+
+---
+
+## 🔧 Configuration Options
+
+### YOLO Model Settings
+```python
+# Adjustable in real-time via interface
+confidence_threshold: 0.01 - 0.95    # Detection confidence
+device: 'auto', 'cpu', 'cuda'        # Processing device
+max_detections: 1000                  # Per-image detection limit
+```
+
+### Upload Behavior
+- **Small Datasets (≤50 images)**: Individual upload with full cancellation
+- **Large Datasets (>50 images)**: Bulk upload with speed optimization
+- **Retry Logic**: Automatic retries with exponential backoff
+- **Progress Tracking**: Real-time status updates
+
+### Database Schema
+```sql
+-- AI Models table
+CREATE TABLE ai_models (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    path VARCHAR(500) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- Datasets table  
+CREATE TABLE datasets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    path VARCHAR(500) NOT NULL,
+    image_count INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+);
+```
+
+---
+
+## 🔍 Troubleshooting Guide
+
+### Common Issues & Solutions
+
+#### Database Connection Problems
+```bash
+❌ Error: "Can't connect to MySQL server"
+✅ Solution:
+   1. Check MySQL service is running
+   2. Verify credentials in "DB Settings"
+   3. Ensure database 'welvision_db' exists
+   4. Test connection using built-in test feature
+```
+
+#### Model Loading Issues
+```bash
+❌ Error: "Model file not found" or "Invalid model format"
+✅ Solution:
+   1. Verify model file path is accessible
+   2. Ensure model is YOLO-compatible (.pt, .pth, .onnx)
+   3. Check file permissions
+   4. Try loading directly from file browser
+```
+
+#### GPU/CUDA Problems
+```bash
+❌ Error: CUDA errors or GPU detection issues
+✅ Solution:
+   1. App automatically falls back to CPU
+   2. Check NVIDIA drivers are updated
+   3. Verify CUDA installation
+   4. Use CPU mode if GPU issues persist
+```
+
+#### Roboflow Upload Failures
+```bash
+❌ Error: Upload timeouts or authentication failures
+✅ Solution:
+   1. Verify API key is correct and active
+   2. Check internet connection stability
+   3. Try smaller batch uploads for large datasets
+   4. Use "Force Close" only if necessary
+```
+
+#### Memory Issues
+```bash
+❌ Error: "Out of memory" or application crashes
+✅ Solution:
+   1. Process smaller batches of images
+   2. Close other memory-intensive applications
+   3. Use CPU mode instead of GPU
+   4. Restart application periodically for large datasets
+```
+
+### Performance Optimization Tips
+
+#### For Better Speed
+- Use GPU mode when available
+- Process images in smaller batches
+- Use smaller YOLO models (yolov8n vs yolov8x)
+- Close unnecessary applications
+
+#### For Better Accuracy
+- Use higher confidence thresholds (0.7+)
+- Use larger YOLO models when possible
+- Manually review generated annotations
+- Fine-tune models on your specific data
+
+#### For Large Datasets
+- Use bulk upload mode for >50 images
+- Process during off-peak hours
+- Ensure stable internet for Roboflow uploads
+- Monitor system resources during processing
+
+---
+
+## 📖 Additional Resources
+
+### Related Documentation
+- `QUICK_START.md` - Fast setup guide
+- `STEP_BY_STEP_WORKFLOW.md` - Detailed workflow instructions
+- `ROBOFLOW_PROJECT_CREATION_GUIDE.md` - Roboflow integration guide
+- `UPLOAD_CANCELLATION_GUIDE.md` - Upload management features
+- `GPU_CPU_GUIDE.md` - Device optimization guide
+
+### External Resources
+- [YOLO Documentation](https://docs.ultralytics.com/)
+- [Roboflow Documentation](https://docs.roboflow.com/)
+- [MySQL Installation Guide](https://dev.mysql.com/doc/mysql-installation-excerpt/)
+
+---
+
+## 🤝 Support & Development
+
+### Getting Help
+1. **Check Troubleshooting**: Review common issues above
+2. **Status Messages**: Read application status messages carefully
+3. **Log Files**: Check console output for detailed error information
+4. **Documentation**: Refer to additional guides in project folder
+
+### Contributing
+This application is part of the WelVision ecosystem. For feature requests, bug reports, or contributions, contact the WelVision development team.
+
+### Version Information
+- **Current Version**: v2.1 (Enhanced Workflow)
+- **Last Updated**: September 2025
+- **Compatibility**: Python 3.8+, MySQL 5.7+
+
+---
+
+## 📄 License
+
+This application is developed by WelVision Innovations Private Limited. All rights reserved.
+
+**Usage Terms:**
+- Licensed for use within authorized organizations
+- Not for redistribution without explicit permission
+- Support and updates provided through official channels
+
+---
+
+**Ready to start labelling? Launch the application and follow the workflow guide above! 🚀**
 
 ### 2. Model Management
 - **Select Existing Model**: Choose from dropdown and click "Load Selected Model"

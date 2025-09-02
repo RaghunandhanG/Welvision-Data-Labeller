@@ -76,6 +76,7 @@ class YOLOLabelerApp(tk.Tk):
         self.upload_queue = queue.Queue()
         self.upload_thread = None
         self.upload_in_progress = False
+        self.upload_cancelled = False
         
         # Default canvas dimensions (will be updated in create_image_preview_panel)
         self.split_canvas_width = 600  # Increased from 400 to 600
@@ -913,11 +914,19 @@ class YOLOLabelerApp(tk.Tk):
         upload_container = tk.Frame(step4_frame, bg=APP_BG_COLOR)
         upload_container.pack(pady=15)
         
+        # Upload and Cancel buttons in the same row
         self.rf_upload_btn = tk.Button(upload_container, text="🚀 Upload Dataset to Roboflow", 
                                       font=("Arial", 14, "bold"), bg="#28a745", fg="white",
                                       command=self.upload_to_roboflow, relief=tk.RAISED, bd=3,
                                       padx=20, pady=10, state="disabled")
-        self.rf_upload_btn.pack()
+        self.rf_upload_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Cancel button (initially hidden)
+        self.rf_cancel_btn = tk.Button(upload_container, text="🛑 Cancel Upload", 
+                                      font=("Arial", 12, "bold"), bg="#dc3545", fg="white",
+                                      command=self.cancel_upload, relief=tk.RAISED, bd=3,
+                                      padx=15, pady=10, state="disabled")
+        self.rf_cancel_btn.pack(side=tk.LEFT)
         
         # Upload info
         upload_info = tk.Label(step4_frame, text="Dataset will be uploaded using workspace.upload_dataset() - bulk upload with annotations", 
@@ -4440,8 +4449,58 @@ This dataset is ready for upload to Roboflow!"""
     
     def on_closing(self):
         """Handle application closing"""
-        if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
-            self.destroy()
+        # Check if upload is in progress
+        if hasattr(self, 'upload_in_progress') and self.upload_in_progress:
+            if messagebox.askyesno("Upload in Progress", 
+                                 "A Roboflow upload is currently in progress.\n\n"
+                                 "Do you want to cancel the upload and close the application?\n\n"
+                                 "Note: Canceling may result in incomplete data upload."):
+                # Cancel the upload
+                self.cancel_upload()
+                self.destroy()
+            # If user chooses not to close, do nothing (keep app open)
+        else:
+            # No upload in progress, normal close confirmation
+            if messagebox.askokcancel("Quit", "Do you want to quit the application?"):
+                self.destroy()
+    
+    def cancel_upload(self):
+        """Cancel ongoing upload process"""
+        try:
+            print("🛑 Canceling upload process...")
+            
+            # Set cancellation flag
+            self.upload_cancelled = True
+            
+            # Mark upload as no longer in progress
+            self.upload_in_progress = False
+            
+            # Update UI
+            if hasattr(self, 'rf_upload_btn'):
+                self.rf_upload_btn.config(state='normal', text="🚀 Upload Dataset to Roboflow")
+            
+            if hasattr(self, 'rf_cancel_btn'):
+                self.rf_cancel_btn.config(state='disabled')
+            
+            # Log cancellation
+            if hasattr(self, 'log_rf_status'):
+                self.log_rf_status("🛑 Upload cancelled by user")
+            
+            # Clear upload queue
+            if hasattr(self, 'upload_queue'):
+                try:
+                    while not self.upload_queue.empty():
+                        self.upload_queue.get_nowait()
+                except:
+                    pass
+            
+            # Note: We can't forcefully stop the thread, but we set the flag
+            # The worker threads should check this flag and exit gracefully
+            
+            print("✅ Upload cancellation initiated")
+            
+        except Exception as e:
+            print(f"❌ Error during upload cancellation: {e}")
     
     def test_api_and_load_projects(self):
         """Step 1: Test API key and load projects directly"""
@@ -5115,9 +5174,13 @@ This dataset is ready for upload to Roboflow!"""
     
     def start_individual_upload(self, coco_file, api_key, project_id):
         """Start the individual upload process in a separate thread"""
-        # Disable upload button and start progress
+        # Disable upload button and enable cancel button
         self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
+        if hasattr(self, 'rf_cancel_btn'):
+            self.rf_cancel_btn.config(state='normal')
+        
         self.upload_in_progress = True
+        self.upload_cancelled = False
         
         # Create upload queue for progress messages
         import queue
@@ -5137,8 +5200,18 @@ This dataset is ready for upload to Roboflow!"""
     def individual_upload_worker(self, coco_file, api_key, project_id):
         """Worker function that runs individual upload in separate thread"""
         try:
+            # Check if upload was cancelled before starting
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                self.upload_queue.put(('error', 'Upload cancelled by user'))
+                return
+            
             # Call the actual individual upload function with annotations enabled
             success = self.upload_dataset_to_roboflow_with_annotations(coco_file, api_key, project_id)
+            
+            # Check if upload was cancelled during process
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                self.upload_queue.put(('error', 'Upload cancelled by user'))
+                return
             
             # Send result back to main thread
             if hasattr(self, 'upload_queue'):
@@ -5182,9 +5255,13 @@ This dataset is ready for upload to Roboflow!"""
 
     def start_workspace_dataset_upload(self, dataset_path, api_key, project_id):
         """Start the workspace dataset upload process using workspace.upload_dataset()"""
-        # Disable upload button and start progress
+        # Disable upload button and enable cancel button
         self.rf_upload_btn.config(state='disabled', text="🔄 Uploading...")
+        if hasattr(self, 'rf_cancel_btn'):
+            self.rf_cancel_btn.config(state='normal')
+        
         self.upload_in_progress = True
+        self.upload_cancelled = False
         
         # Create upload queue for progress messages
         import queue
@@ -5204,8 +5281,18 @@ This dataset is ready for upload to Roboflow!"""
     def workspace_dataset_upload_worker(self, dataset_path, api_key, project_id):
         """Worker function that runs workspace.upload_dataset() in separate thread"""
         try:
+            # Check if upload was cancelled before starting
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                self.upload_queue.put(('error', 'Upload cancelled by user'))
+                return
+            
             # Call the new workspace upload function
             success = self.upload_dataset_using_workspace_method(dataset_path, api_key, project_id)
+            
+            # Check if upload was cancelled during process
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                self.upload_queue.put(('error', 'Upload cancelled by user'))
+                return
             
             # Send result back to main thread
             if hasattr(self, 'upload_queue'):
@@ -5254,6 +5341,10 @@ This dataset is ready for upload to Roboflow!"""
             import json
             import os
             
+            # Check for cancellation at start
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                return False
+            
             # Log start of workspace upload
             if hasattr(self, 'upload_queue'):
                 self.upload_queue.put(('progress', "✅ Starting workspace dataset upload"))
@@ -5270,6 +5361,10 @@ This dataset is ready for upload to Roboflow!"""
                     self.after(0, lambda: self.log_rf_status(version_msg))
             except:
                 pass
+            
+            # Check for cancellation before initialization
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                return False
             
             # Initialize Roboflow with API key
             progress_msg = "🔄 Initializing Roboflow SDK..."
@@ -5356,6 +5451,10 @@ This dataset is ready for upload to Roboflow!"""
                 self.after(0, lambda: self.log_rf_status(api_msg))
                 self.after(0, lambda: self.log_rf_status(separator_msg))
             
+            # Check for cancellation before validation
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                return False
+            
             # Validate COCO format integrity before upload
             validation_msg = "🔍 Validating COCO format integrity..."
             if hasattr(self, 'upload_queue'):
@@ -5380,6 +5479,29 @@ This dataset is ready for upload to Roboflow!"""
             # Check annotation-image consistency
             image_ids = {img['id'] for img in images_data}
             orphan_annotations = [ann for ann in annotations_data if ann.get('image_id') not in image_ids]
+            
+            if orphan_annotations:
+                error_msg = f"❌ Found {len(orphan_annotations)} orphan annotations (no matching image)"
+                if hasattr(self, 'upload_queue'):
+                    self.upload_queue.put(('progress', error_msg))
+                return False
+            
+            validation_success_msg = "✅ COCO format validation passed"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', validation_success_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(validation_success_msg))
+            
+            # Check for cancellation before upload
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                return False
+            
+            # Start the actual upload
+            upload_msg = f"🚀 Uploading dataset to project: {project_id}"
+            if hasattr(self, 'upload_queue'):
+                self.upload_queue.put(('progress', upload_msg))
+            else:
+                self.after(0, lambda: self.log_rf_status(upload_msg))
             
             if orphan_annotations:
                 warning_msg = f"⚠️ Found {len(orphan_annotations)} orphan annotations (no matching image)"
@@ -5410,6 +5532,12 @@ This dataset is ready for upload to Roboflow!"""
             
             # Upload dataset using workspace.upload_dataset() with annotation_labelmap - MAIN FIX!
             try:
+                # Check for cancellation before main upload
+                if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                    if hasattr(self, 'upload_queue'):
+                        self.upload_queue.put(('progress', "🛑 Upload cancelled by user"))
+                    return False
+                
                 # Try with annotation_labelmap parameter first
                 result = workspace.upload_dataset(
                     dataset_path,  # Path to the dataset directory
@@ -5421,6 +5549,12 @@ This dataset is ready for upload to Roboflow!"""
                     num_retries=3,  # Increased retries
                     annotation_labelmap=annotation_labelmap  # KEY FIX: Map category IDs to names
                 )
+                
+                # Check for cancellation after upload
+                if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                    if hasattr(self, 'upload_queue'):
+                        self.upload_queue.put(('progress', "🛑 Upload cancelled by user"))
+                    return False
                 
                 labelmap_msg = "✅ Upload successful with annotation_labelmap parameter"
                 if hasattr(self, 'upload_queue'):
@@ -5477,7 +5611,12 @@ This dataset is ready for upload to Roboflow!"""
     def handle_upload_complete(self, success):
         """Handle upload completion"""
         self.upload_in_progress = False
+        self.upload_cancelled = False
+        
+        # Reset button states
         self.rf_upload_btn.config(state='normal', text="🚀 Upload Dataset to Roboflow")
+        if hasattr(self, 'rf_cancel_btn'):
+            self.rf_cancel_btn.config(state='disabled')
         
         if success:
             self.log_rf_status("🎉 Dataset upload completed successfully!")
@@ -5493,9 +5632,20 @@ This dataset is ready for upload to Roboflow!"""
     def handle_upload_error(self, error_msg):
         """Handle upload error"""
         self.upload_in_progress = False
+        self.upload_cancelled = False
+        
+        # Reset button states
         self.rf_upload_btn.config(state='normal', text="🚀 Upload Dataset to Roboflow")
+        if hasattr(self, 'rf_cancel_btn'):
+            self.rf_cancel_btn.config(state='disabled')
+        
         self.log_rf_status(f"❌ Upload error: {error_msg}")
-        messagebox.showerror("Upload Error", f"Upload failed: {error_msg}")
+        
+        # Don't show error dialog if upload was cancelled by user
+        if "cancelled by user" not in error_msg.lower():
+            messagebox.showerror("Upload Error", f"Upload failed: {error_msg}")
+        else:
+            messagebox.showinfo("Upload Cancelled", "Upload has been cancelled by user.")
 
     def upload_dataset_using_workspace(self, dataset_path, api_key, project_id):
         """Upload dataset using workspace.upload_dataset method (efficient bulk upload)"""
@@ -5797,6 +5947,10 @@ This dataset is ready for upload to Roboflow!"""
     def upload_dataset_to_roboflow_with_annotations(self, coco_file, api_key, project_id):
         """Upload dataset with annotations to Roboflow using individual upload method with annotation fixes"""
         try:
+            # Check for cancellation at start
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
+                return False
+            
             # Import required modules
             try:
                 from roboflow import Roboflow
@@ -5814,6 +5968,10 @@ This dataset is ready for upload to Roboflow!"""
                     self.upload_queue.put(('progress', error_msg))
                 else:
                     self.after(0, lambda: self.log_rf_status(error_msg))
+                return False
+            
+            # Check for cancellation before initialization
+            if hasattr(self, 'upload_cancelled') and self.upload_cancelled:
                 return False
             
             # Initialize Roboflow
